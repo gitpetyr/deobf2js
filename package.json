@@ -1,0 +1,16 @@
+{
+  "name": "js-deobfuscator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automated JS deobfuscation tool targeting Cloudflare Turnstile-style obfuscation",
+  "scripts": {
+    "deobfuscate": "node src/deobfuscator.js"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.26.0",
+    "@babel/parser": "^7.26.0",
+    "@babel/traverse": "^7.26.0",
+    "@babel/types": "^7.26.0",
+    "jsdom": "^25.0.0"
+  }
+}
