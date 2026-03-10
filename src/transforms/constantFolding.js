@@ -1,0 +1,142 @@
+const traverse = require("@babel/traverse").default;
+const t = require("@babel/types");
+
+const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
+function log(...args) {
+  if (verbose) process.stderr.write("[constantFolding] " + args.join(" ") + "\n");
+}
+
+/**
+ * Try to statically evaluate an AST node to a primitive value.
+ * Returns { value } on success, or null if not evaluable.
+ */
+function tryEvaluate(node) {
+  // Literals
+  if (t.isNumericLiteral(node) || t.isStringLiteral(node) || t.isBooleanLiteral(node)) {
+    return { value: node.value };
+  }
+  if (t.isNullLiteral(node)) {
+    return { value: null };
+  }
+
+  // Empty array expression: [] — used as intermediate for +[], ![]
+  if (t.isArrayExpression(node) && node.elements.length === 0) {
+    return { value: [] };
+  }
+
+  // Unary expressions: !, +, -, ~, typeof, void
+  if (t.isUnaryExpression(node) && !node.prefix === false) {
+    const argResult = tryEvaluate(node.argument);
+    if (argResult === null) return null;
+    const arg = argResult.value;
+
+    switch (node.operator) {
+      case "!": return { value: !arg };
+      case "+": return { value: +arg };
+      case "-": return { value: -arg };
+      case "~": return { value: ~arg };
+      case "typeof": return { value: typeof arg };
+      case "void": return { value: undefined };
+      default: return null;
+    }
+  }
+
+  // Binary expressions
+  if (t.isBinaryExpression(node)) {
+    const leftResult = tryEvaluate(node.left);
+    if (leftResult === null) return null;
+    const rightResult = tryEvaluate(node.right);
+    if (rightResult === null) return null;
+    const l = leftResult.value;
+    const r = rightResult.value;
+
+    switch (node.operator) {
+      case "+": return { value: l + r };
+      case "-": return { value: l - r };
+      case "*": return { value: l * r };
+      case "/": return { value: l / r };
+      case "%": return { value: l % r };
+      case "**": return { value: l ** r };
+      case "|": return { value: l | r };
+      case "&": return { value: l & r };
+      case "^": return { value: l ^ r };
+      case "<<": return { value: l << r };
+      case ">>": return { value: l >> r };
+      case ">>>": return { value: l >>> r };
+      case "==": return { value: l == r };
+      case "!=": return { value: l != r };
+      case "===": return { value: l === r };
+      case "!==": return { value: l !== r };
+      case "<": return { value: l < r };
+      case ">": return { value: l > r };
+      case "<=": return { value: l <= r };
+      case ">=": return { value: l >= r };
+      default: return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Build a Babel AST node for a primitive value.
+ */
+function valueToNode(value) {
+  if (typeof value === "boolean") return t.booleanLiteral(value);
+  if (typeof value === "number") return t.numericLiteral(value);
+  if (typeof value === "string") return t.stringLiteral(value);
+  if (value === null) return t.nullLiteral();
+  if (value === undefined) return t.identifier("undefined");
+  return null;
+}
+
+function constantFolding(ast) {
+  let totalChanges = 0;
+  let pass = 0;
+
+  while (true) {
+    pass++;
+    let changes = 0;
+
+    traverse(ast, {
+      UnaryExpression(path) {
+        const result = tryEvaluate(path.node);
+        if (result === null) return;
+        const { value } = result;
+
+        // Only replace with primitives, skip NaN/Infinity/-Infinity
+        if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
+        if (Array.isArray(value)) return;
+
+        const replacement = valueToNode(value);
+        if (!replacement) return;
+
+        path.replaceWith(replacement);
+        changes++;
+      },
+      BinaryExpression(path) {
+        const result = tryEvaluate(path.node);
+        if (result === null) return;
+        const { value } = result;
+
+        if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
+        if (Array.isArray(value)) return;
+
+        const replacement = valueToNode(value);
+        if (!replacement) return;
+
+        path.replaceWith(replacement);
+        changes++;
+      },
+    });
+
+    log("Pass", pass, ":", changes, "folds");
+    totalChanges += changes;
+    if (changes === 0) break;
+  }
+
+  log("Total changes:", totalChanges, "in", pass, "passes");
+  return totalChanges;
+}
+
+module.exports = constantFolding;

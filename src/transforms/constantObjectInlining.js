@@ -107,7 +107,7 @@ function extractStaticProps(objExpr) {
       return null;
     }
 
-    if (!t.isLiteral(prop.value)) return null;
+    if (!t.isLiteral(prop.value)) continue;
     propMap.set(key, prop.value);
   }
   if (propMap.size === 0) return null;

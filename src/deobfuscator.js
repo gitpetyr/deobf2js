@@ -6,6 +6,9 @@ const stringDecryptor = require("./transforms/stringDecryptor");
 const copyPropagation = require("./transforms/copyPropagation");
 const deadCodeElimination = require("./transforms/deadCodeElimination");
 const constantObjectInlining = require("./transforms/constantObjectInlining");
+const constantFolding = require("./transforms/constantFolding");
+const objectProxyInlining = require("./transforms/objectProxyInlining");
+const controlFlowUnflattening = require("./transforms/controlFlowUnflattening");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -127,26 +130,44 @@ function main() {
     log("=== Pipeline iteration", iteration, "===");
     let iterationChanges = 0;
 
-    // Phase 1: Constant object inlining (Vg.W -> 1204)
+    // Phase 1: Constant folding (!![] -> true, +[] -> 0)
+    log("Running constant folding...");
+    const foldChanges = constantFolding(ast);
+    log("Constant folding complete,", foldChanges, "changes");
+    iterationChanges += foldChanges;
+
+    // Phase 2: Constant object inlining (Vg.W -> 1204)
     log("Running constant object inlining...");
     const inlineChanges = constantObjectInlining(ast);
     log("Constant object inlining complete,", inlineChanges, "changes");
     iterationChanges += inlineChanges;
 
-    // Phase 2: String decryption
+    // Phase 3: Object proxy inlining (obj.fn(a,b) -> a !== b)
+    log("Running object proxy inlining...");
+    const proxyChanges = objectProxyInlining(ast);
+    log("Object proxy inlining complete,", proxyChanges, "changes");
+    iterationChanges += proxyChanges;
+
+    // Phase 4: Control flow unflattening (while-switch -> sequential)
+    log("Running control flow unflattening...");
+    const cffChanges = controlFlowUnflattening(ast);
+    log("Control flow unflattening complete,", cffChanges, "changes");
+    iterationChanges += cffChanges;
+
+    // Phase 5: String decryption
     log("Running string decryption...");
     const { consumedPaths } = stringDecryptor(ast);
     log("String decryption complete,", consumedPaths.length, "nodes consumed");
     allConsumedPaths.push(...consumedPaths);
     iterationChanges += consumedPaths.length;
 
-    // Phase 3: Copy propagation
+    // Phase 6: Copy propagation
     log("Running copy propagation...");
     const copyChanges = copyPropagation(ast);
     log("Copy propagation complete,", copyChanges, "changes");
     iterationChanges += copyChanges;
 
-    // Phase 4: Dead code elimination
+    // Phase 7: Dead code elimination
     log("Running dead code elimination...");
     const deadRemoved = deadCodeElimination(ast, consumedPaths);
     log("Dead code elimination complete,", deadRemoved, "nodes removed");
