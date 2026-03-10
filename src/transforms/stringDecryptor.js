@@ -26,6 +26,26 @@ function evaluateArg(node) {
   ) {
     return -node.argument.value;
   }
+  // Binary expressions with literal operands: e.g. 1204 + 0
+  if (t.isBinaryExpression(node)) {
+    const left = evaluateArg(node.left);
+    const right = evaluateArg(node.right);
+    if (left !== undefined && right !== undefined) {
+      switch (node.operator) {
+        case "+": return left + right;
+        case "-": return left - right;
+        case "*": return left * right;
+        case "/": return right !== 0 ? left / right : undefined;
+        case "%": return right !== 0 ? left % right : undefined;
+        case "|": return left | right;
+        case "&": return left & right;
+        case "^": return left ^ right;
+        case "<<": return left << right;
+        case ">>": return left >> right;
+        case ">>>": return left >>> right;
+      }
+    }
+  }
   return undefined;
 }
 

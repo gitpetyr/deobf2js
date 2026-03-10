@@ -84,6 +84,44 @@ function copyPropagation(ast) {
       },
     });
 
+    // Handle parameter reassignment with exactly 1 constant violation:
+    // function(uz, ...) { uz = s; ... uz(...) ... }
+    traverse(ast, {
+      AssignmentExpression(path) {
+        if (path.node.operator !== "=") return;
+        const left = path.node.left;
+        const right = path.node.right;
+
+        if (!t.isIdentifier(left)) return;
+        if (!t.isIdentifier(right) && !t.isLiteral(right)) return;
+
+        const binding = path.scope.getBinding(left.name);
+        if (!binding) return;
+        // Must have exactly 1 constant violation (this assignment itself)
+        if (binding.constantViolations.length !== 1) return;
+        if (binding.constant) return; // already handled above
+
+        // The single violation must be this assignment
+        const violation = binding.constantViolations[0];
+        if (!violation.isAssignmentExpression() || violation.node !== path.node) return;
+
+        // Get the position of this assignment to only replace references after it
+        const assignLoc = path.node.start;
+        const refs = binding.referencePaths;
+        for (const ref of refs) {
+          if (ref.node === left) continue;
+          // Only replace references that appear after the assignment
+          if (ref.node.start !== undefined && ref.node.start < assignLoc) continue;
+          if (t.isIdentifier(right)) {
+            ref.replaceWith(t.identifier(right.name));
+          } else {
+            ref.replaceWith(t.cloneNode(right));
+          }
+          changes++;
+        }
+      },
+    });
+
     log("Pass", pass, ":", changes, "changes");
     totalChanges += changes;
 

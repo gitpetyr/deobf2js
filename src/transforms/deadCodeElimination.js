@@ -14,7 +14,7 @@ function deadCodeElimination(ast, consumedPaths) {
   const consumedSet = new Set(consumedPaths.map((p) => p.node));
   traverse(ast, {
     enter(path) {
-      if (consumedSet.has(path.node) && path.parent.type === "Program") {
+      if (consumedSet.has(path.node)) {
         path.remove();
         removedCount++;
       }
@@ -29,11 +29,10 @@ function deadCodeElimination(ast, consumedPaths) {
     },
   });
 
-  // Step 2: Remove unreferenced declarations
+  // Step 2: Remove unreferenced declarations at any scope
   let deadCount = 0;
   traverse(ast, {
     FunctionDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       const binding = path.scope.getBinding(path.node.id.name);
       if (binding && binding.referencePaths.length === 0) {
         path.remove();
@@ -41,7 +40,6 @@ function deadCodeElimination(ast, consumedPaths) {
       }
     },
     VariableDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       const declarators = path.get("declarations");
       let allDead = true;
 

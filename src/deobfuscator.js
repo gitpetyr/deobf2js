@@ -5,6 +5,7 @@ const t = require("@babel/types");
 const stringDecryptor = require("./transforms/stringDecryptor");
 const copyPropagation = require("./transforms/copyPropagation");
 const deadCodeElimination = require("./transforms/deadCodeElimination");
+const constantObjectInlining = require("./transforms/constantObjectInlining");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -118,20 +119,42 @@ function main() {
     log("Unwrapped outer IIFE layer", depth + 1, "(style:", iifeInfo.style + ")");
   }
 
-  // Step 3: String decryption
-  log("Running string decryption...");
-  const { consumedPaths } = stringDecryptor(ast);
-  log("String decryption complete,", consumedPaths.length, "nodes consumed");
+  // Step 3: Multi-pass deobfuscation pipeline (max 3 iterations)
+  const allConsumedPaths = [];
+  const MAX_ITERATIONS = 3;
 
-  // Step 4: Copy propagation
-  log("Running copy propagation...");
-  const copyChanges = copyPropagation(ast);
-  log("Copy propagation complete,", copyChanges, "changes");
+  for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+    log("=== Pipeline iteration", iteration, "===");
+    let iterationChanges = 0;
 
-  // Step 5: Dead code elimination
-  log("Running dead code elimination...");
-  const deadRemoved = deadCodeElimination(ast, consumedPaths);
-  log("Dead code elimination complete,", deadRemoved, "nodes removed");
+    // Phase 1: Constant object inlining (Vg.W -> 1204)
+    log("Running constant object inlining...");
+    const inlineChanges = constantObjectInlining(ast);
+    log("Constant object inlining complete,", inlineChanges, "changes");
+    iterationChanges += inlineChanges;
+
+    // Phase 2: String decryption
+    log("Running string decryption...");
+    const { consumedPaths } = stringDecryptor(ast);
+    log("String decryption complete,", consumedPaths.length, "nodes consumed");
+    allConsumedPaths.push(...consumedPaths);
+    iterationChanges += consumedPaths.length;
+
+    // Phase 3: Copy propagation
+    log("Running copy propagation...");
+    const copyChanges = copyPropagation(ast);
+    log("Copy propagation complete,", copyChanges, "changes");
+    iterationChanges += copyChanges;
+
+    // Phase 4: Dead code elimination
+    log("Running dead code elimination...");
+    const deadRemoved = deadCodeElimination(ast, consumedPaths);
+    log("Dead code elimination complete,", deadRemoved, "nodes removed");
+    iterationChanges += deadRemoved;
+
+    log("Iteration", iteration, "total changes:", iterationChanges);
+    if (iterationChanges === 0) break;
+  }
 
   // Step 6: Generate output
   log("Generating output...");

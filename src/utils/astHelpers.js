@@ -6,8 +6,6 @@ function findStringArrays(ast) {
 
   traverse(ast, {
     VariableDeclaration(path) {
-      if (path.parent.type !== "Program") return;
-
       for (const declarator of path.get("declarations")) {
         const init = declarator.get("init");
         if (!init.node) continue;
@@ -44,6 +42,54 @@ function findStringArrays(ast) {
         }
       }
     },
+
+    // Pattern 3: function P(kY) { kY = "...".split("~"); P = function() { return kY; }; return P(); }
+    FunctionDeclaration(path) {
+      const node = path.node;
+      if (!node.id || !t.isIdentifier(node.id)) return;
+      const body = node.body.body;
+      if (body.length < 2) return;
+
+      let hasSplitAssign = false;
+      let hasSelfReassign = false;
+      const fnName = node.id.name;
+
+      for (const stmt of body) {
+        // Look for: kY = "...".split("~")
+        if (
+          t.isExpressionStatement(stmt) &&
+          t.isAssignmentExpression(stmt.expression, { operator: "=" })
+        ) {
+          const right = stmt.expression.right;
+          if (
+            t.isCallExpression(right) &&
+            t.isMemberExpression(right.callee) &&
+            t.isStringLiteral(right.callee.object) &&
+            t.isIdentifier(right.callee.property, { name: "split" }) &&
+            right.arguments.length === 1 &&
+            t.isStringLiteral(right.arguments[0])
+          ) {
+            hasSplitAssign = true;
+          }
+        }
+        // Look for: P = function() { return kY; }
+        if (
+          t.isExpressionStatement(stmt) &&
+          t.isAssignmentExpression(stmt.expression, { operator: "=" }) &&
+          t.isIdentifier(stmt.expression.left, { name: fnName }) &&
+          t.isFunctionExpression(stmt.expression.right)
+        ) {
+          hasSelfReassign = true;
+        }
+      }
+
+      if (hasSplitAssign && hasSelfReassign) {
+        results.push({
+          path: path,
+          name: fnName,
+        });
+      }
+    },
   });
 
   return results;
@@ -55,12 +101,10 @@ function findShuffleIIFEs(ast, arrayNames) {
 
   traverse(ast, {
     ExpressionStatement(path) {
-      if (path.parent.type !== "Program") return;
-
       const expr = path.node.expression;
 
       // Classic IIFE: (function(){ ... })()
-      // Bang-style: !function(){ ... }()
+      // Unary-style: !function(){ ... }() or ~function(){ ... }()
       let fnBody = null;
       if (
         t.isCallExpression(expr) &&
@@ -68,7 +112,8 @@ function findShuffleIIFEs(ast, arrayNames) {
       ) {
         fnBody = expr.callee.body;
       } else if (
-        t.isUnaryExpression(expr, { operator: "!" }) &&
+        t.isUnaryExpression(expr) &&
+        (expr.operator === "!" || expr.operator === "~") &&
         t.isCallExpression(expr.argument) &&
         t.isFunctionExpression(expr.argument.callee)
       ) {
@@ -88,11 +133,23 @@ function findShuffleIIFEs(ast, arrayNames) {
 
       if (!fnBody) return;
 
-      // Check the full expression (including call arguments) for array references
-      const code = JSON.stringify(path.node);
-      const refsArray = arrayNames.some((name) => code.includes('"' + name + '"'));
+      // Extract the call arguments to check for direct array name references
+      let callArgs = [];
+      if (t.isCallExpression(expr)) {
+        callArgs = expr.arguments;
+      } else if (t.isUnaryExpression(expr) && t.isCallExpression(expr.argument)) {
+        callArgs = expr.argument.arguments;
+      }
+
+      // Check if any call argument directly references an array name
+      const refsArray = callArgs.some(
+        (arg) => t.isIdentifier(arg) && nameSet.has(arg.name)
+      );
+
+      // Check the body for push/shift pattern
+      const bodyCode = JSON.stringify(fnBody);
       const hasPushShift =
-        code.includes('"push"') && code.includes('"shift"');
+        bodyCode.includes('"push"') && bodyCode.includes('"shift"');
 
       if (refsArray && hasPushShift) {
         results.push({ path });
@@ -111,7 +168,6 @@ function findDecoderFunctions(ast, arrayNames) {
   // First pass: find wrapper functions (single return statement returning array name)
   traverse(ast, {
     FunctionDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       const body = path.node.body.body;
       if (
         body.length === 1 &&
@@ -127,7 +183,6 @@ function findDecoderFunctions(ast, arrayNames) {
       }
     },
     VariableDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       for (const declarator of path.get("declarations")) {
         const init = declarator.get("init");
         if (!init.node || !init.isFunctionExpression()) continue;
@@ -154,7 +209,6 @@ function findDecoderFunctions(ast, arrayNames) {
   // Second pass: find decoder functions
   traverse(ast, {
     FunctionDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       if (wrapperNames.has(path.node.id.name)) return;
       if (path.node.params.length < 1) return;
 
@@ -177,7 +231,6 @@ function findDecoderFunctions(ast, arrayNames) {
       }
     },
     VariableDeclaration(path) {
-      if (path.parent.type !== "Program") return;
       for (const declarator of path.get("declarations")) {
         const init = declarator.get("init");
         if (!init.node || !init.isFunctionExpression()) continue;
