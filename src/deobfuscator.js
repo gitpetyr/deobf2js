@@ -9,6 +9,8 @@ const constantObjectInlining = require("./transforms/constantObjectInlining");
 const constantFolding = require("./transforms/constantFolding");
 const objectProxyInlining = require("./transforms/objectProxyInlining");
 const controlFlowUnflattening = require("./transforms/controlFlowUnflattening");
+const antiDebugRemoval = require("./transforms/antiDebugRemoval");
+const commaExpressionSplitter = require("./transforms/commaExpressionSplitter");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -122,6 +124,11 @@ function main() {
     log("Unwrapped outer IIFE layer", depth + 1, "(style:", iifeInfo.style + ")");
   }
 
+  // Step 2.6: Remove anti-debug traps before main pipeline
+  log("Running anti-debug removal...");
+  const antiDebugChanges = antiDebugRemoval(ast);
+  log("Anti-debug removal complete,", antiDebugChanges, "changes");
+
   // Step 3: Multi-pass deobfuscation pipeline (max 3 iterations)
   const allConsumedPaths = [];
   const MAX_ITERATIONS = 3;
@@ -172,6 +179,12 @@ function main() {
     const deadRemoved = deadCodeElimination(ast, consumedPaths);
     log("Dead code elimination complete,", deadRemoved, "nodes removed");
     iterationChanges += deadRemoved;
+
+    // Phase 8: Comma expression splitting (a(), b(), c() → separate statements)
+    log("Running comma expression splitting...");
+    const commaChanges = commaExpressionSplitter(ast);
+    log("Comma expression splitting complete,", commaChanges, "changes");
+    iterationChanges += commaChanges;
 
     log("Iteration", iteration, "total changes:", iterationChanges);
     if (iterationChanges === 0) break;

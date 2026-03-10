@@ -128,6 +128,59 @@ function constantFolding(ast) {
         path.replaceWith(replacement);
         changes++;
       },
+
+      // Dead branch elimination: if(true)/if(false)
+      IfStatement(path) {
+        const test = path.node.test;
+        if (!t.isBooleanLiteral(test)) return;
+
+        if (test.value) {
+          // if (true) { A } else { B } → A
+          path.replaceWithMultiple(
+            t.isBlockStatement(path.node.consequent)
+              ? path.node.consequent.body
+              : [path.node.consequent]
+          );
+        } else {
+          // if (false) { A } else { B } → B or remove
+          if (path.node.alternate) {
+            path.replaceWithMultiple(
+              t.isBlockStatement(path.node.alternate)
+                ? path.node.alternate.body
+                : [path.node.alternate]
+            );
+          } else {
+            path.remove();
+          }
+        }
+        changes++;
+      },
+
+      // Dead branch elimination: true ? A : B → A, false ? A : B → B
+      ConditionalExpression(path) {
+        const test = path.node.test;
+        if (!t.isBooleanLiteral(test)) return;
+
+        path.replaceWith(test.value ? path.node.consequent : path.node.alternate);
+        changes++;
+      },
+
+      // Safe logical simplification (preserves side effects)
+      LogicalExpression(path) {
+        const { left, right, operator } = path.node;
+        if (!t.isBooleanLiteral(left)) return;
+
+        if (operator === "&&" && left.value === true) {
+          // true && x → x
+          path.replaceWith(right);
+          changes++;
+        } else if (operator === "||" && left.value === false) {
+          // false || x → x
+          path.replaceWith(right);
+          changes++;
+        }
+        // Skip: true || x, false && x — would discard x which may have side effects
+      },
     });
 
     log("Pass", pass, ":", changes, "folds");
