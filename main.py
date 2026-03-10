@@ -17,6 +17,10 @@ def main():
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Verbose output"
     )
+    parser.add_argument(
+        "--max-iterations", type=int, default=None,
+        help="Max pipeline iterations (default: unlimited, stops when no changes)"
+    )
     args = parser.parse_args()
 
     # Check node is available
@@ -46,8 +50,11 @@ def main():
 
     # Run deobfuscator
     deobfuscator_js = os.path.join(script_dir, "src", "deobfuscator.js")
+    cmd = ["node", deobfuscator_js, args.input, args.output]
+    if args.max_iterations is not None:
+        cmd += ["--max-iterations", str(args.max_iterations)]
     result = subprocess.run(
-        ["node", deobfuscator_js, args.input, args.output],
+        cmd,
         env=env,
         timeout=60,
     )

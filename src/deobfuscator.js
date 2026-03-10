@@ -100,8 +100,19 @@ function main() {
   const outputPath = process.argv[3];
 
   if (!inputPath) {
-    process.stderr.write("Usage: node src/deobfuscator.js <input> [output]\n");
+    process.stderr.write("Usage: node src/deobfuscator.js <input> [output] [--max-iterations N]\n");
     process.exit(1);
+  }
+
+  // Parse --max-iterations flag
+  let maxIterations = Infinity;
+  const maxIterIdx = process.argv.indexOf("--max-iterations");
+  if (maxIterIdx !== -1 && process.argv[maxIterIdx + 1]) {
+    maxIterations = parseInt(process.argv[maxIterIdx + 1], 10);
+    if (!Number.isFinite(maxIterations) || maxIterations < 1) {
+      process.stderr.write("Error: --max-iterations must be a positive integer\n");
+      process.exit(1);
+    }
   }
 
   // Step 1: Read input
@@ -129,11 +140,10 @@ function main() {
   const antiDebugChanges = antiDebugRemoval(ast);
   log("Anti-debug removal complete,", antiDebugChanges, "changes");
 
-  // Step 3: Multi-pass deobfuscation pipeline (max 3 iterations)
+  // Step 3: Multi-pass deobfuscation pipeline (iterate until no changes)
   const allConsumedPaths = [];
-  const MAX_ITERATIONS = 3;
 
-  for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+  for (let iteration = 1; iteration <= maxIterations; iteration++) {
     log("=== Pipeline iteration", iteration, "===");
     let iterationChanges = 0;
 

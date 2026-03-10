@@ -1,58 +1,132 @@
 # JS Deobfuscator
 
-自动化 JS 反混淆工具，针对 Cloudflare Turnstile 风格的混淆代码。所有转换均在 AST 层面通过 Babel 完成，严禁使用正则处理 JS 逻辑。
+自动化 JavaScript 反混淆工具，针对 Cloudflare Turnstile 风格的混淆。基于 Babel AST 的多阶段处理管线，Python CLI + Node.js 混合架构。
 
-## 架构
+## 快速开始
 
-**Python CLI 入口 + Node.js AST 核心**（Babel + vm 沙箱 + JSDOM）
+```bash
+# 安装依赖
+npm install
 
-转换管道：
+# 通过 Python CLI 运行
+python main.py -i obfuscated.js -o clean.js -v
 
-1. **字符串解密** — 检测字符串数组、洗牌 IIFE 和解码函数，在 JSDOM+VM 沙箱中执行，将所有解码调用替换为解密后的字符串字面量。
-2. **拷贝传播** — 多轮迭代传播标识符别名和字面量值，直到不动点。
-3. **死代码消除** — 移除已消费的解码器基础设施和零引用声明。
+# 限制最多迭代 5 轮
+python main.py -i obfuscated.js -o clean.js --max-iterations 5
+
+# 或直接用 Node.js
+node src/deobfuscator.js input.js output.js
+
+# Node.js 也支持 --max-iterations
+node src/deobfuscator.js input.js output.js --max-iterations 5
+
+# 详细日志输出到 stderr
+DEOBFUSCATOR_VERBOSE=1 node src/deobfuscator.js input.js output.js
+```
+
+## 处理能力
+
+### 完全自动化
+
+| 混淆技术 | 处理模块 | 示例 |
+|----------|---------|------|
+| 类型混淆 | `constantFolding` | `!![]` → `true`、`+[]` → `0`、`![]` → `false` |
+| 常量表达式折叠 | `constantFolding` | `1 + 2` → `3`、`"a" + "b"` → `"ab"` |
+| 死分支消除 | `constantFolding` | `if (true) { A } else { B }` → `A` |
+| 逻辑表达式简化 | `constantFolding` | `true && x` → `x`、`false \|\| x` → `x` |
+| 常量对象内联 | `constantObjectInlining` | `obj.W` → `1204`（支持混合对象） |
+| 对象方法代理内联 | `objectProxyInlining` | `obj['fn'](a, b)` → `a !== b` |
+| 控制流反平坦化 | `controlFlowUnflattening` | `while-switch` 状态机 → 顺序语句 |
+| 字符串阵列解密 | `stringDecryptor` | 数组 + shuffle + decoder 沙盒执行 |
+| 复制传播 | `copyPropagation` | `var x = y; use(x)` → `use(y)` |
+| 反调试剔除 | `antiDebugRemoval` | 移除 `debugger` 语句和定时器调试陷阱 |
+| 逗号表达式拆分 | `commaExpressionSplitter` | `a(), b(), c()` → 三条独立语句 |
+| 死代码消除 | `deadCodeElimination` | 移除解密基础设施和无引用声明 |
+| IIFE 解包 | `deobfuscator.js` | 自动剥离最多 10 层 IIFE 嵌套 |
+
+### 安全边界（刻意不处理）
+
+| 场景 | 原因 |
+|------|------|
+| `true \|\| sideEffect()` | 短路求值会吞掉副作用，不安全 |
+| `return a(), b` 中的逗号 | 值语义不同于语句，拆分会改变行为 |
+| `Function("debugger")()` | 需字符串拼接解密后才能识别，留给后续迭代 |
+| 不透明谓词 `a == a*a/a` | NaN 陷阱，无法安全静态求值 |
+
+## 处理管线
+
+每次运行重复执行迭代，直到无变更为止：
+
+```
+                    ┌─ 预处理 ──────────────────┐
+                    │  IIFE 解包 (最多 10 层)     │
+                    │  反调试剔除                  │
+                    └───────────────────────────┘
+                                 │
+                    ┌─ 迭代管线 (无变更时停止) ──┐
+                    │                            │
+                    │  1. 常量折叠                │
+                    │     !![] → true, +[] → 0   │
+                    │     死分支/逻辑简化          │
+                    │                            │
+                    │  2. 常量对象内联             │
+                    │     obj.key → literal       │
+                    │                            │
+                    │  3. 对象代理内联             │
+                    │     obj.fn(a,b) → a !== b   │
+                    │                            │
+                    │  4. 控制流反平坦化           │
+                    │     while-switch → 顺序      │
+                    │                            │
+                    │  5. 字符串解密               │
+                    │     sandbox 执行 decoder    │
+                    │                            │
+                    │  6. 复制传播                 │
+                    │     消除变量间接引用          │
+                    │                            │
+                    │  7. 死代码消除               │
+                    │     移除已消费节点            │
+                    │                            │
+                    │  8. 逗号表达式拆分           │
+                    │     a(),b() → 独立语句       │
+                    │                            │
+                    │  无变更? → 退出循环          │
+                    └───────────────────────────┘
+                                 │
+                    ┌─ 后处理 ──────────────────┐
+                    │  重新包裹 IIFE              │
+                    │  生成输出代码                │
+                    └───────────────────────────┘
+```
+
+## 项目结构
+
+```
+js-deobfuscator/
+├── main.py                              # Python CLI 入口 (argparse, 60s 超时)
+├── src/
+│   ├── deobfuscator.js                  # Node.js 主编排器
+│   ├── transforms/
+│   │   ├── constantFolding.js           # 常量折叠 + 死分支 + 逻辑简化
+│   │   ├── constantObjectInlining.js    # 常量对象属性内联
+│   │   ├── objectProxyInlining.js       # 对象代理函数内联
+│   │   ├── controlFlowUnflattening.js   # 控制流反平坦化
+│   │   ├── stringDecryptor.js           # 字符串阵列沙盒解密
+│   │   ├── copyPropagation.js           # 多遍复制传播
+│   │   ├── deadCodeElimination.js       # 死代码消除
+│   │   ├── antiDebugRemoval.js          # 反调试陷阱移除
+│   │   └── commaExpressionSplitter.js   # 逗号表达式拆分
+│   └── utils/
+│       ├── astHelpers.js                # AST 模式匹配辅助
+│       └── sandbox.js                   # JSDOM + VM 沙盒执行
+└── test/fixtures/                       # 测试样本
+```
 
 ## 环境要求
 
 - Python 3.6+
 - Node.js >= 18
 
-## 安装
-
-```bash
-npm install
-```
-
-## 使用
-
-```bash
-python main.py -i obfuscated.js -o clean.js
-
-# 详细输出模式
-python main.py -i obfuscated.js -o clean.js -v
-```
-
-## 示例
-
-输入：
-```javascript
-var Gg = ["document", "Hello", "log", "World"];
-(function (arr, num) {
-  while (--num) { arr.push(arr.shift()); }
-})(Gg, 4);
-function Xj(a, b) { a = a - 0; var c = Gg[a]; return c; }
-var a = Xj;
-var b = a;
-!function () { var c = b("1"); window[c]; }();
-```
-
-输出：
-```javascript
-!function () {
-  window["document"];
-}();
-```
-
 ## 许可证
 
-AGPL-3.0 — Copyright (C) 2026 Liveless
+AGPL-3.0
