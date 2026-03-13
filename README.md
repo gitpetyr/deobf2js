@@ -93,6 +93,11 @@ DEOBFUSCATOR_VERBOSE=1 node src/deobfuscator.js input.js output.js
                     │  无变更? → 退出循环          │
                     └───────────────────────────┘
                                  │
+                    ┌─ AI 后处理（可选）────────┐
+                    │  按函数粒度 AI 优化        │
+                    │  变量重命名/逻辑简化/死代码  │
+                    └───────────────────────────┘
+                                 │
                     ┌─ 后处理 ──────────────────┐
                     │  重新包裹 IIFE              │
                     │  生成输出代码                │
@@ -103,9 +108,13 @@ DEOBFUSCATOR_VERBOSE=1 node src/deobfuscator.js input.js output.js
 
 ```
 js-deobfuscator/
-├── main.py                              # Python CLI 入口 (argparse, 60s 超时)
+├── main.py                              # Python CLI 入口 (argparse, 60s/300s 超时)
 ├── src/
 │   ├── deobfuscator.js                  # Node.js 主编排器
+│   ├── ai/
+│   │   ├── client.js                    # 统一 AI 客户端 (OpenAI/Gemini/Claude)
+│   │   ├── prompts.js                   # AI 提示词模板
+│   │   └── functionExtractor.js         # 函数提取与依赖分析
 │   ├── transforms/
 │   │   ├── constantFolding.js           # 常量折叠 + 死分支 + 逻辑简化
 │   │   ├── constantObjectInlining.js    # 常量对象属性内联
@@ -115,7 +124,8 @@ js-deobfuscator/
 │   │   ├── copyPropagation.js           # 多遍复制传播
 │   │   ├── deadCodeElimination.js       # 死代码消除
 │   │   ├── antiDebugRemoval.js          # 反调试陷阱移除
-│   │   └── commaExpressionSplitter.js   # 逗号表达式拆分
+│   │   ├── commaExpressionSplitter.js   # 逗号表达式拆分
+│   │   └── aiRefine.js                  # AI 后处理优化
 │   └── utils/
 │       ├── astHelpers.js                # AST 模式匹配辅助
 │       └── sandbox.js                   # JSDOM + VM 沙盒执行
@@ -126,6 +136,50 @@ js-deobfuscator/
 
 - Python 3.6+
 - Node.js >= 18
+
+## AI 优化（可选）
+
+在全部 AST 机械变换完成后，可启用 AI 后处理步骤，按函数粒度发送给 AI 做变量重命名、逻辑简化和死代码清理。支持 OpenAI / Gemini / Claude 三家 API。
+
+### 配置
+
+设置对应 provider 的 API key 环境变量：
+
+| Provider | 环境变量 | 默认模型 |
+|----------|---------|---------|
+| openai | `OPENAI_API_KEY` | `gpt-4o` |
+| gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+
+### 用法
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-xxx python main.py -i obfuscated.js -o clean.js -v --ai-provider openai
+
+# Gemini
+GEMINI_API_KEY=xxx python main.py -i obfuscated.js -o clean.js -v --ai-provider gemini
+
+# Claude
+ANTHROPIC_API_KEY=xxx python main.py -i obfuscated.js -o clean.js -v --ai-provider claude
+
+# 自定义模型
+OPENAI_API_KEY=xxx python main.py -i obfuscated.js -o clean.js --ai-provider openai --ai-model gpt-4-turbo
+
+# 自定义 API 地址（兼容 OpenAI 协议的第三方服务）
+OPENAI_API_KEY=xxx python main.py -i obfuscated.js -o clean.js --ai-provider openai --ai-base-url http://localhost:11434
+
+# 直接用 Node.js
+OPENAI_API_KEY=sk-xxx node src/deobfuscator.js input.js output.js --ai-provider openai
+```
+
+### 说明
+
+- AI 步骤在所有确定性 AST 变换之后执行，不影响原有管线
+- 不带 `--ai-provider` 参数时行为完全不变
+- 每个函数独立发送，AI 返回的代码会经过语法验证、参数数量检查和外部依赖检查
+- 任何验证失败的函数会跳过，保留 AST 原版
+- 启用 AI 时 Python CLI 超时从 60s 提升到 300s
 
 ## 许可证
 

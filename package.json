@@ -11,6 +11,7 @@
     "@babel/parser": "^7.26.0",
     "@babel/traverse": "^7.26.0",
     "@babel/types": "^7.26.0",
-    "jsdom": "^25.0.0"
+    "jsdom": "^25.0.0",
+    "openai": "^4.77.0"
   }
 }

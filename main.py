@@ -21,6 +21,18 @@ def main():
         "--max-iterations", type=int, default=None,
         help="Max pipeline iterations (default: unlimited, stops when no changes)"
     )
+    parser.add_argument(
+        "--ai-provider", choices=["openai", "gemini", "claude"],
+        help="AI provider for post-processing refinement"
+    )
+    parser.add_argument(
+        "--ai-model", default=None,
+        help="AI model name (default: provider-specific)"
+    )
+    parser.add_argument(
+        "--ai-base-url", default=None,
+        help="Custom API base URL (auto-appends /v1 unless URL ends with /)"
+    )
     args = parser.parse_args()
 
     # Check node is available
@@ -53,10 +65,18 @@ def main():
     cmd = ["node", deobfuscator_js, args.input, args.output]
     if args.max_iterations is not None:
         cmd += ["--max-iterations", str(args.max_iterations)]
+    if args.ai_provider:
+        cmd += ["--ai-provider", args.ai_provider]
+    if args.ai_model:
+        cmd += ["--ai-model", args.ai_model]
+    if args.ai_base_url:
+        cmd += ["--ai-base-url", args.ai_base_url]
+
+    timeout = 300 if args.ai_provider else 60
     result = subprocess.run(
         cmd,
         env=env,
-        timeout=60,
+        # timeout=timeout,
     )
 
     sys.exit(result.returncode)

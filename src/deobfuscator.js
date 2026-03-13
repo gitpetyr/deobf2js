@@ -11,6 +11,7 @@ const objectProxyInlining = require("./transforms/objectProxyInlining");
 const controlFlowUnflattening = require("./transforms/controlFlowUnflattening");
 const antiDebugRemoval = require("./transforms/antiDebugRemoval");
 const commaExpressionSplitter = require("./transforms/commaExpressionSplitter");
+const aiRefine = require("./transforms/aiRefine");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -95,12 +96,12 @@ function detectOuterIIFE(ast) {
   return { innerCode, style, wrap };
 }
 
-function main() {
+async function main() {
   const inputPath = process.argv[2];
   const outputPath = process.argv[3];
 
   if (!inputPath) {
-    process.stderr.write("Usage: node src/deobfuscator.js <input> [output] [--max-iterations N]\n");
+    process.stderr.write("Usage: node src/deobfuscator.js <input> [output] [--max-iterations N] [--ai-provider openai|gemini|claude] [--ai-model MODEL] [--ai-base-url URL]\n");
     process.exit(1);
   }
 
@@ -113,6 +114,23 @@ function main() {
       process.stderr.write("Error: --max-iterations must be a positive integer\n");
       process.exit(1);
     }
+  }
+
+  // Parse AI flags
+  let aiProvider = null;
+  let aiModel = null;
+  let aiBaseURL = null;
+  const aiProviderIdx = process.argv.indexOf("--ai-provider");
+  if (aiProviderIdx !== -1 && process.argv[aiProviderIdx + 1]) {
+    aiProvider = process.argv[aiProviderIdx + 1];
+  }
+  const aiModelIdx = process.argv.indexOf("--ai-model");
+  if (aiModelIdx !== -1 && process.argv[aiModelIdx + 1]) {
+    aiModel = process.argv[aiModelIdx + 1];
+  }
+  const aiBaseURLIdx = process.argv.indexOf("--ai-base-url");
+  if (aiBaseURLIdx !== -1 && process.argv[aiBaseURLIdx + 1]) {
+    aiBaseURL = process.argv[aiBaseURLIdx + 1];
   }
 
   // Step 1: Read input
@@ -200,6 +218,13 @@ function main() {
     if (iterationChanges === 0) break;
   }
 
+  // AI refinement (optional, after all mechanical transforms)
+  if (aiProvider) {
+    log("Running AI refinement...");
+    const aiChanges = await aiRefine(ast, { provider: aiProvider, model: aiModel, baseURL: aiBaseURL });
+    log("AI refinement complete,", aiChanges, "functions refined");
+  }
+
   // Step 6: Generate output
   log("Generating output...");
   const output = generate(ast, {
@@ -226,4 +251,7 @@ function main() {
   log("Done!");
 }
 
-main();
+main().catch((err) => {
+  process.stderr.write("[deobfuscator] Fatal error: " + err.message + "\n");
+  process.exit(1);
+});
