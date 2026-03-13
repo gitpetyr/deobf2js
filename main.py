@@ -22,8 +22,8 @@ def main():
         help="Max pipeline iterations (default: unlimited, stops when no changes)"
     )
     parser.add_argument(
-        "--sandbox", choices=["jsdom", "playwright"], default="jsdom",
-        help="Sandbox backend for string decryption (default: jsdom)"
+        "--sandbox", choices=["jsdom", "playwright"], default="playwright",
+        help="Sandbox backend for string decryption (default: playwright)"
     )
     parser.add_argument(
         "--ai-provider", choices=["openai", "gemini", "claude"],
@@ -69,7 +69,7 @@ def main():
     cmd = ["node", deobfuscator_js, args.input, args.output]
     if args.max_iterations is not None:
         cmd += ["--max-iterations", str(args.max_iterations)]
-    if args.sandbox != "jsdom":
+    if args.sandbox != "playwright":
         cmd += ["--sandbox", args.sandbox]
     if args.ai_provider:
         cmd += ["--ai-provider", args.ai_provider]
@@ -82,7 +82,7 @@ def main():
     result = subprocess.run(
         cmd,
         env=env,
-        # timeout=timeout,
+        timeout=timeout,
     )
 
     sys.exit(result.returncode)

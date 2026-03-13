@@ -121,7 +121,7 @@ async function main() {
   let aiProvider = null;
   let aiModel = null;
   let aiBaseURL = null;
-  let sandboxType = "jsdom";
+  let sandboxType = "playwright";
   const sandboxIdx = process.argv.indexOf("--sandbox");
   if (sandboxIdx !== -1 && process.argv[sandboxIdx + 1]) {
     sandboxType = process.argv[sandboxIdx + 1];

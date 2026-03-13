@@ -106,9 +106,7 @@ async function aiRefine(ast, aiConfig) {
       }
 
       // Validate: parameter count must match
-      const originalParamCount = t.isFunctionDeclaration(func.node)
-        ? func.node.params.length
-        : func.node.params.length;
+      const originalParamCount = func.node.params.length;
 
       if (extracted.paramCount !== originalParamCount) {
         log(
@@ -131,9 +129,7 @@ async function aiRefine(ast, aiConfig) {
       if (hasNewDeps) continue;
 
       // All validations passed — replace the node
-      const replacementNode = extracted.fnNode
-        ? extracted.node // VariableDeclaration
-        : extracted.node; // FunctionDeclaration
+      const replacementNode = extracted.node;
 
       if (t.isFunctionDeclaration(func.node) && t.isFunctionDeclaration(replacementNode)) {
         func.path.replaceWith(replacementNode);

@@ -25,7 +25,7 @@ function tryEvaluate(node) {
   }
 
   // Unary expressions: !, +, -, ~, typeof, void
-  if (t.isUnaryExpression(node) && !node.prefix === false) {
+  if (t.isUnaryExpression(node) && node.prefix) {
     const argResult = tryEvaluate(node.argument);
     if (argResult === null) return null;
     const arg = argResult.value;

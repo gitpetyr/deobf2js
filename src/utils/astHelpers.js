@@ -1,6 +1,64 @@
 const traverse = require("@babel/traverse").default;
 const t = require("@babel/types");
 
+// Recursive AST check: does node contain a MemberExpression with property name propName?
+function hasMemberAccess(node, propName) {
+  if (!node) return false;
+  if (
+    t.isMemberExpression(node) &&
+    t.isIdentifier(node.property, { name: propName })
+  ) return true;
+  if (
+    t.isMemberExpression(node) &&
+    t.isStringLiteral(node.property, { value: propName })
+  ) return true;
+  for (const key of t.VISITOR_KEYS[node.type] || []) {
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) {
+        if (c && c.type && hasMemberAccess(c, propName)) return true;
+      }
+    } else if (child && child.type && hasMemberAccess(child, propName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Recursive AST check: does node reference an identifier with given name?
+function referencesIdentifier(node, name) {
+  if (!node) return false;
+  if (t.isIdentifier(node) && node.name === name) return true;
+  for (const key of t.VISITOR_KEYS[node.type] || []) {
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) {
+        if (c && c.type && referencesIdentifier(c, name)) return true;
+      }
+    } else if (child && child.type && referencesIdentifier(child, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Recursive AST check: does node contain a computed MemberExpression?
+function hasComputedMember(node) {
+  if (!node) return false;
+  if (t.isMemberExpression(node) && node.computed) return true;
+  for (const key of t.VISITOR_KEYS[node.type] || []) {
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) {
+        if (c && c.type && hasComputedMember(c)) return true;
+      }
+    } else if (child && child.type && hasComputedMember(child)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function findStringArrays(ast) {
   const results = [];
 
@@ -147,9 +205,7 @@ function findShuffleIIFEs(ast, arrayNames) {
       );
 
       // Check the body for push/shift pattern
-      const bodyCode = JSON.stringify(fnBody);
-      const hasPushShift =
-        bodyCode.includes('"push"') && bodyCode.includes('"shift"');
+      const hasPushShift = hasMemberAccess(fnBody, "push") && hasMemberAccess(fnBody, "shift");
 
       if (refsArray && hasPushShift) {
         results.push({ path });
@@ -212,16 +268,15 @@ function findDecoderFunctions(ast, arrayNames) {
       if (wrapperNames.has(path.node.id.name)) return;
       if (path.node.params.length < 1) return;
 
-      const code = JSON.stringify(path.node);
       const refsRelevant = [...allRelevantNames].some(
-        (name) => code.includes('"' + name + '"')
+        (name) => referencesIdentifier(path.node, name)
       );
       // Check for computed member access pattern: arr[something]
-      const hasComputedAccess = code.includes('"computed":true');
+      const hasComputedAccess = hasComputedMember(path.node);
 
       if (refsRelevant && hasComputedAccess) {
         const associatedWrappers = wrapperResults.filter((w) =>
-          code.includes('"' + w.name + '"')
+          referencesIdentifier(path.node, w.name)
         );
         results.push({
           path,
@@ -237,15 +292,14 @@ function findDecoderFunctions(ast, arrayNames) {
         if (wrapperNames.has(declarator.node.id.name)) continue;
         if (init.node.params.length < 1) continue;
 
-        const code = JSON.stringify(init.node);
         const refsRelevant = [...allRelevantNames].some(
-          (name) => code.includes('"' + name + '"')
+          (name) => referencesIdentifier(init.node, name)
         );
-        const hasComputedAccess = code.includes('"computed":true');
+        const hasComputedAccess = hasComputedMember(init.node);
 
         if (refsRelevant && hasComputedAccess) {
           const associatedWrappers = wrapperResults.filter((w) =>
-            code.includes('"' + w.name + '"')
+            referencesIdentifier(init.node, w.name)
           );
           results.push({
             path,

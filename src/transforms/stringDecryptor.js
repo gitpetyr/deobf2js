@@ -124,44 +124,43 @@ async function stringDecryptor(ast, options = {}) {
   }
   log("Sandbox execution successful");
 
-  // Step 4: Build alias map via iterative BFS
+  // Step 4: Build alias map via single traversal + iterative resolution
   const aliasMap = new Map(); // alias -> original decoder name
   for (const name of decoderNames) {
     aliasMap.set(name, name);
   }
 
+  const candidates = [];
+  traverse(ast, {
+    VariableDeclarator(path) {
+      const id = path.node.id;
+      const init = path.node.init;
+      if (t.isIdentifier(id) && t.isIdentifier(init)) {
+        candidates.push({ target: id.name, source: init.name });
+      }
+    },
+    AssignmentExpression(path) {
+      const left = path.node.left;
+      const right = path.node.right;
+      if (
+        path.node.operator === "=" &&
+        t.isIdentifier(left) &&
+        t.isIdentifier(right)
+      ) {
+        candidates.push({ target: left.name, source: right.name });
+      }
+    },
+  });
+
   let changed = true;
   while (changed) {
     changed = false;
-    traverse(ast, {
-      VariableDeclarator(path) {
-        const id = path.node.id;
-        const init = path.node.init;
-        if (
-          t.isIdentifier(id) &&
-          t.isIdentifier(init) &&
-          aliasMap.has(init.name) &&
-          !aliasMap.has(id.name)
-        ) {
-          aliasMap.set(id.name, aliasMap.get(init.name));
-          changed = true;
-        }
-      },
-      AssignmentExpression(path) {
-        const left = path.node.left;
-        const right = path.node.right;
-        if (
-          path.node.operator === "=" &&
-          t.isIdentifier(left) &&
-          t.isIdentifier(right) &&
-          aliasMap.has(right.name) &&
-          !aliasMap.has(left.name)
-        ) {
-          aliasMap.set(left.name, aliasMap.get(right.name));
-          changed = true;
-        }
-      },
-    });
+    for (const c of candidates) {
+      if (aliasMap.has(c.source) && !aliasMap.has(c.target)) {
+        aliasMap.set(c.target, aliasMap.get(c.source));
+        changed = true;
+      }
+    }
   }
   log("Alias map size:", aliasMap.size);
 

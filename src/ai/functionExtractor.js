@@ -38,8 +38,7 @@ function extractFunctions(ast) {
       const parentDecl = path.parentPath;
       if (
         parentDecl &&
-        parentDecl.parent === ast.program ||
-        (parentDecl && t.isProgram(parentDecl.parent))
+        (parentDecl.parent === ast.program || t.isProgram(parentDecl.parent))
       ) {
         if (
           t.isIdentifier(path.node.id) &&
@@ -78,7 +77,7 @@ function extractFunctions(ast) {
     if (lines < 3 || lines > 200) return;
 
     // Scope analysis: find external references
-    const externalDeps = [];
+    const externalDepsSet = new Set();
     const calleeNames = new Set();
 
     const fnScope = t.isFunctionDeclaration(fnNode)
@@ -122,8 +121,8 @@ function extractFunctions(ast) {
           calleeNames.add(refName);
         }
 
-        if (!externalDeps.includes(refName)) {
-          externalDeps.push(refName);
+        if (!externalDepsSet.has(refName)) {
+          externalDepsSet.add(refName);
         }
       },
     });
@@ -144,6 +143,8 @@ function extractFunctions(ast) {
         callees.push({ name: calleeName, snippet });
       }
     }
+
+    const externalDeps = [...externalDepsSet];
 
     functions.push({
       path,

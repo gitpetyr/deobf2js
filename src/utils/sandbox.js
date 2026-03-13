@@ -154,7 +154,6 @@ function createSandbox() {
       location: window.location,
       setTimeout: window.setTimeout, setInterval: window.setInterval,
       clearTimeout: window.clearTimeout, clearInterval: window.clearInterval,
-      console,
     });
   }
 
@@ -179,12 +178,12 @@ function callFunctionInSandbox(context, fnName, args) {
  * Returns { execute, call, close } — all async for interface compatibility.
  */
 function createJsdomInstance() {
-  const { context } = createSandbox();
+  const { dom, context } = createSandbox();
   return {
     type: "jsdom",
     async execute(code) { executeInSandbox(context, code); },
     async call(fnName, args) { return callFunctionInSandbox(context, fnName, args); },
-    async close() { /* no cleanup needed */ },
+    async close() { dom.window.close(); },
   };
 }
 

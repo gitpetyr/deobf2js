@@ -7,6 +7,23 @@ function log(...args) {
     process.stderr.write("[deadCodeElimination] " + args.join(" ") + "\n");
 }
 
+// Check if an AST node references a given identifier name
+function referencesName(node, name) {
+  if (!node) return false;
+  if (t.isIdentifier(node) && node.name === name) return true;
+  for (const key of t.VISITOR_KEYS[node.type] || []) {
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) {
+        if (c && c.type && referencesName(c, name)) return true;
+      }
+    } else if (child && child.type && referencesName(child, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Check if an AST node is free of side effects
 function isPure(node) {
   if (!node) return true;
@@ -79,8 +96,7 @@ function deadCodeElimination(ast, consumedPaths) {
       const binding = path.scope.getBinding(name);
       if (!binding || binding.referencePaths.length > 0) return;
       // Only remove if the function body referenced a consumed name
-      const code = JSON.stringify(path.node);
-      const refsConsumed = [...consumedNames].some((n) => code.includes('"' + n + '"'));
+      const refsConsumed = [...consumedNames].some((n) => referencesName(path.node, n));
       if (refsConsumed) {
         path.remove();
         deadCount++;
@@ -101,8 +117,7 @@ function deadCodeElimination(ast, consumedPaths) {
           continue;
         }
         // Only count as dead if it referenced consumed infrastructure
-        const code = JSON.stringify(declarator.node);
-        const refsConsumed = [...consumedNames].some((n) => code.includes('"' + n + '"'));
+        const refsConsumed = [...consumedNames].some((n) => referencesName(declarator.node, n));
         if (!refsConsumed) {
           allDead = false;
         }

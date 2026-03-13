@@ -26,8 +26,6 @@ async function createPlaywrightInstance() {
     headless: true,
     args: [
       "--disable-blink-features=AutomationControlled",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
     ],
   });
@@ -52,8 +50,10 @@ async function createPlaywrightInstance() {
     },
 
     async call(fnName, args) {
-      const argsStr = args.map((a) => JSON.stringify(a)).join(", ");
-      return await page.evaluate(`${fnName}(${argsStr})`);
+      return await page.evaluate(({ fn, a }) => {
+        const func = new Function('return ' + fn)();
+        return func(...a);
+      }, { fn: fnName, a: args });
     },
 
     async close() {
