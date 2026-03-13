@@ -31,8 +31,20 @@ function resolveOrderArray(node, scope) {
   // Variable reference
   if (t.isIdentifier(node) && scope) {
     const binding = scope.getBinding(node.name);
-    if (binding && binding.path.isVariableDeclarator() && binding.path.node.init) {
+    if (!binding) return null;
+
+    // Case 1: var U = "..."["split"]("|")
+    if (binding.path.isVariableDeclarator() && binding.path.node.init) {
       return resolveOrderArray(binding.path.node.init, binding.scope);
+    }
+
+    // Case 2: parameter reassigned — U = "..."["split"]("|")
+    // Find the assignment in constantViolations
+    for (const violation of binding.constantViolations) {
+      if (violation.isAssignmentExpression() && violation.node.operator === "=") {
+        const result = resolveOrderArray(violation.node.right, scope);
+        if (result) return result;
+      }
     }
   }
 
@@ -40,18 +52,60 @@ function resolveOrderArray(node, scope) {
 }
 
 /**
- * Try to resolve the index variable init value and find its declaration path.
- * Returns { initValue, declarationPath } or null.
+ * Try to resolve the index variable init value and find its path for removal.
+ * Returns { initValue, removePath } or null.
  */
 function resolveIndexVar(name, scope) {
   const binding = scope.getBinding(name);
-  if (!binding || !binding.path.isVariableDeclarator()) return null;
+  if (!binding) return null;
 
-  const init = binding.path.node.init;
-  if (!init) return null;
+  // Case 1: var O = 0
+  if (binding.path.isVariableDeclarator()) {
+    const init = binding.path.node.init;
+    if (init && t.isNumericLiteral(init) && init.value === 0) {
+      return { initValue: 0, removePath: binding.path };
+    }
+  }
 
-  if (t.isNumericLiteral(init) && init.value === 0) {
-    return { initValue: 0, declarationPath: binding.path };
+  // Case 2: parameter reassigned — O = 0
+  for (const violation of binding.constantViolations) {
+    if (violation.isAssignmentExpression() && violation.node.operator === "=") {
+      const right = violation.node.right;
+      if (t.isNumericLiteral(right) && right.value === 0) {
+        const stmt = violation.parentPath;
+        if (stmt && stmt.isExpressionStatement()) {
+          return { initValue: 0, removePath: stmt };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find the removable path for the order array assignment.
+ */
+function findOrderRemovePath(orderNode, scope) {
+  if (!t.isIdentifier(orderNode)) return null;
+
+  const binding = scope.getBinding(orderNode.name);
+  if (!binding) return null;
+
+  // Case 1: var declaration
+  if (binding.path.isVariableDeclarator()) {
+    return binding.path;
+  }
+
+  // Case 2: assignment expression
+  for (const violation of binding.constantViolations) {
+    if (violation.isAssignmentExpression() && violation.node.operator === "=" &&
+        t.isIdentifier(violation.node.left) && violation.node.left.name === orderNode.name) {
+      const stmt = violation.parentPath;
+      if (stmt && stmt.isExpressionStatement()) {
+        return stmt;
+      }
+    }
   }
 
   return null;
@@ -79,14 +133,9 @@ function controlFlowUnflattening(ast) {
       const disc = switchNode.discriminant;
       if (!t.isMemberExpression(disc) || !disc.computed) return;
 
-      // Property: idx++ (UpdateExpression with ++ postfix)
+      // Property: idx++ (UpdateExpression with ++ postfix or prefix)
       const prop = disc.property;
-      if (!t.isUpdateExpression(prop) || prop.operator !== "++" || !prop.prefix) {
-        if (!t.isUpdateExpression(prop) || prop.operator !== "++" || prop.prefix) {
-          // Accept both prefix and postfix
-          if (!t.isUpdateExpression(prop) || prop.operator !== "++") return;
-        }
-      }
+      if (!t.isUpdateExpression(prop) || prop.operator !== "++") return;
       if (!t.isIdentifier(prop.argument)) return;
       const indexVarName = prop.argument.name;
 
@@ -131,19 +180,11 @@ function controlFlowUnflattening(ast) {
       // Collect paths to remove: order array declaration, index variable declaration
       const pathsToRemove = [];
 
-      // Try to find and remove the order array declaration
-      if (t.isIdentifier(orderNode)) {
-        const orderBinding = path.scope.getBinding(orderNode.name);
-        if (orderBinding && orderBinding.path.isVariableDeclarator()) {
-          pathsToRemove.push(orderBinding.path);
-        }
-      }
+      const orderRemovePath = findOrderRemovePath(orderNode, path.scope);
+      if (orderRemovePath) pathsToRemove.push(orderRemovePath);
 
-      // Try to find and remove the index variable declaration
       const indexInfo = resolveIndexVar(indexVarName, path.scope);
-      if (indexInfo) {
-        pathsToRemove.push(indexInfo.declarationPath);
-      }
+      if (indexInfo) pathsToRemove.push(indexInfo.removePath);
 
       // Replace the while loop with sequential statements
       path.replaceWithMultiple(sequential);
@@ -151,10 +192,15 @@ function controlFlowUnflattening(ast) {
 
       // Remove infrastructure declarations
       for (const p of pathsToRemove) {
-        const parent = p.parent;
-        if (t.isVariableDeclaration(parent) && parent.declarations.length === 1) {
-          p.parentPath.remove();
+        if (t.isVariableDeclarator(p.node)) {
+          const parent = p.parent;
+          if (t.isVariableDeclaration(parent) && parent.declarations.length === 1) {
+            p.parentPath.remove();
+          } else {
+            p.remove();
+          }
         } else {
+          // ExpressionStatement or other removable path
           p.remove();
         }
       }

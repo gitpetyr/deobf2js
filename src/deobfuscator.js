@@ -11,6 +11,7 @@ const objectProxyInlining = require("./transforms/objectProxyInlining");
 const controlFlowUnflattening = require("./transforms/controlFlowUnflattening");
 const antiDebugRemoval = require("./transforms/antiDebugRemoval");
 const commaExpressionSplitter = require("./transforms/commaExpressionSplitter");
+const objectPropertyCollapse = require("./transforms/objectPropertyCollapse");
 const aiRefine = require("./transforms/aiRefine");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
@@ -101,7 +102,7 @@ async function main() {
   const outputPath = process.argv[3];
 
   if (!inputPath) {
-    process.stderr.write("Usage: node src/deobfuscator.js <input> [output] [--max-iterations N] [--ai-provider openai|gemini|claude] [--ai-model MODEL] [--ai-base-url URL]\n");
+    process.stderr.write("Usage: node src/deobfuscator.js <input> [output] [--sandbox jsdom|playwright] [--max-iterations N] [--ai-provider openai|gemini|claude] [--ai-model MODEL] [--ai-base-url URL]\n");
     process.exit(1);
   }
 
@@ -120,6 +121,15 @@ async function main() {
   let aiProvider = null;
   let aiModel = null;
   let aiBaseURL = null;
+  let sandboxType = "jsdom";
+  const sandboxIdx = process.argv.indexOf("--sandbox");
+  if (sandboxIdx !== -1 && process.argv[sandboxIdx + 1]) {
+    sandboxType = process.argv[sandboxIdx + 1];
+    if (sandboxType !== "jsdom" && sandboxType !== "playwright") {
+      process.stderr.write("Error: --sandbox must be 'jsdom' or 'playwright'\n");
+      process.exit(1);
+    }
+  }
   const aiProviderIdx = process.argv.indexOf("--ai-provider");
   if (aiProviderIdx !== -1 && process.argv[aiProviderIdx + 1]) {
     aiProvider = process.argv[aiProviderIdx + 1];
@@ -171,6 +181,12 @@ async function main() {
     log("Constant folding complete,", foldChanges, "changes");
     iterationChanges += foldChanges;
 
+    // Phase 1.5: Collapse M={}; M["k"]=v; into M={k:v}
+    log("Running object property collapse...");
+    const collapseChanges = objectPropertyCollapse(ast);
+    log("Object property collapse complete,", collapseChanges, "changes");
+    iterationChanges += collapseChanges;
+
     // Phase 2: Constant object inlining (Vg.W -> 1204)
     log("Running constant object inlining...");
     const inlineChanges = constantObjectInlining(ast);
@@ -191,7 +207,7 @@ async function main() {
 
     // Phase 5: String decryption
     log("Running string decryption...");
-    const { consumedPaths } = stringDecryptor(ast);
+    const { consumedPaths } = await stringDecryptor(ast, { sandboxType });
     log("String decryption complete,", consumedPaths.length, "nodes consumed");
     allConsumedPaths.push(...consumedPaths);
     iterationChanges += consumedPaths.length;

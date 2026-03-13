@@ -14,8 +14,8 @@ function constantObjectInlining(ast) {
     pass++;
     let changes = 0;
 
-    // Collect constant object declarations: var Vg = { W: 1204, M: 1453, ... }
-    const objectMaps = new Map(); // name -> { propMap, bindingScope }
+    // Phase 1: Collect ALL object literal definitions with position info
+    const definitions = [];
 
     traverse(ast, {
       VariableDeclarator(path) {
@@ -27,9 +27,13 @@ function constantObjectInlining(ast) {
         const propMap = extractStaticProps(init);
         if (!propMap) return;
 
-        objectMaps.set(id.name, { propMap, scope: path.scope });
+        definitions.push({
+          name: id.name,
+          propMap,
+          start: path.node.start,
+          end: Infinity,
+        });
       },
-      // Also handle parameter reassignment: Vg = { W: 1204, ... }
       AssignmentExpression(path) {
         if (path.node.operator !== "=") return;
         const left = path.node.left;
@@ -40,21 +44,88 @@ function constantObjectInlining(ast) {
         const propMap = extractStaticProps(right);
         if (!propMap) return;
 
-        objectMaps.set(left.name, { propMap, scope: path.scope });
+        definitions.push({
+          name: left.name,
+          propMap,
+          start: path.node.start,
+          end: Infinity,
+        });
       },
     });
 
-    if (objectMaps.size === 0) break;
-    log("Pass", pass, ": found", objectMaps.size, "constant objects");
+    if (definitions.length === 0) break;
 
-    // Replace MemberExpression lookups with literal values
+    // Phase 2: Collect ALL assignments to each variable name (for invalidation)
+    const assignmentPositions = new Map(); // name -> sorted [start]
+
+    traverse(ast, {
+      VariableDeclarator(path) {
+        if (!t.isIdentifier(path.node.id)) return;
+        const name = path.node.id.name;
+        if (!assignmentPositions.has(name)) assignmentPositions.set(name, []);
+        assignmentPositions.get(name).push(path.node.start);
+      },
+      AssignmentExpression(path) {
+        if (path.node.operator !== "=") return;
+        if (!t.isIdentifier(path.node.left)) return;
+        const name = path.node.left.name;
+        if (!assignmentPositions.has(name)) assignmentPositions.set(name, []);
+        assignmentPositions.get(name).push(path.node.start);
+      },
+    });
+
+    for (const positions of assignmentPositions.values()) {
+      positions.sort((a, b) => a - b);
+    }
+
+    // Phase 3: Compute validity range for each definition
+    for (const def of definitions) {
+      const positions = assignmentPositions.get(def.name) || [];
+      // Find the first assignment to this name that comes AFTER this definition
+      for (const pos of positions) {
+        if (pos > def.start) {
+          def.end = pos;
+          break;
+        }
+      }
+    }
+
+    log("Pass", pass, ": found", definitions.length, "constant object definitions");
+
+    // Phase 4: Replace MemberExpression lookups using position-aware matching
     traverse(ast, {
       MemberExpression(path) {
         const obj = path.node.object;
         if (!t.isIdentifier(obj)) return;
 
-        const entry = objectMaps.get(obj.name);
-        if (!entry) return;
+        // Resolve position: try node itself, then walk up parents for cloned nodes
+        let refPos = path.node.start;
+        if (refPos === undefined) {
+          let pp = path.parentPath;
+          while (pp && pp.node && pp.node.start === undefined) pp = pp.parentPath;
+          if (pp && pp.node) refPos = pp.node.start;
+        }
+
+        const varName = obj.name;
+
+        // Find the most recent applicable definition for this reference
+        let bestDef = null;
+        if (refPos !== undefined) {
+          for (const def of definitions) {
+            if (def.name !== varName) continue;
+            if (def.start >= refPos) continue;
+            if (refPos >= def.end) continue;
+            if (!bestDef || def.start > bestDef.start) {
+              bestDef = def;
+            }
+          }
+        } else {
+          // No position available: only safe if there's exactly one definition for this name
+          const matching = definitions.filter(d => d.name === varName);
+          if (matching.length === 1) bestDef = matching[0];
+        }
+
+        if (!bestDef) return;
 
         let key = null;
         if (!path.node.computed && t.isIdentifier(path.node.property)) {
@@ -64,12 +135,12 @@ function constantObjectInlining(ast) {
         }
 
         if (key === null) return;
-        if (!entry.propMap.has(key)) return;
+        if (!bestDef.propMap.has(key)) return;
 
         // Don't replace if it's an assignment target
         if (path.parentPath.isAssignmentExpression() && path.parentPath.node.left === path.node) return;
 
-        const value = entry.propMap.get(key);
+        const value = bestDef.propMap.get(key);
         path.replaceWith(t.cloneNode(value));
         changes++;
       },
@@ -95,8 +166,9 @@ function constantObjectInlining(ast) {
 function extractStaticProps(objExpr) {
   const propMap = new Map();
   for (const prop of objExpr.properties) {
-    if (!t.isObjectProperty(prop)) return null;
-    if (prop.computed) return null;
+    if (t.isSpreadElement(prop)) return null; // spreads make all props unpredictable
+    if (!t.isObjectProperty(prop)) continue;  // skip methods, don't bail
+    if (prop.computed) continue;              // skip computed keys
 
     let key;
     if (t.isIdentifier(prop.key)) {
@@ -104,7 +176,7 @@ function extractStaticProps(objExpr) {
     } else if (t.isStringLiteral(prop.key)) {
       key = prop.key.value;
     } else {
-      return null;
+      continue;
     }
 
     if (!t.isLiteral(prop.value)) continue;

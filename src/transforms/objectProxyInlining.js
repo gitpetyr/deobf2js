@@ -72,8 +72,8 @@ function objectProxyInlining(ast) {
     pass++;
     let changes = 0;
 
-    // Collect objects with proxy function properties
-    const proxyMaps = new Map(); // varName -> Map<propKey, { params, returnExpr }>
+    // Phase 1: Collect all objects with proxy function properties, with position info
+    const definitions = [];
 
     traverse(ast, {
       VariableDeclarator(path) {
@@ -85,7 +85,12 @@ function objectProxyInlining(ast) {
         const funcMap = extractProxyFunctions(init);
         if (funcMap.size === 0) return;
 
-        proxyMaps.set(id.name, funcMap);
+        definitions.push({
+          name: id.name,
+          funcMap,
+          start: path.node.start,
+          end: Infinity,
+        });
       },
       AssignmentExpression(path) {
         if (path.node.operator !== "=") return;
@@ -97,22 +102,88 @@ function objectProxyInlining(ast) {
         const funcMap = extractProxyFunctions(right);
         if (funcMap.size === 0) return;
 
-        proxyMaps.set(left.name, funcMap);
+        definitions.push({
+          name: left.name,
+          funcMap,
+          start: path.node.start,
+          end: Infinity,
+        });
       },
     });
 
-    if (proxyMaps.size === 0) break;
-    log("Pass", pass, ": found", proxyMaps.size, "objects with proxy functions");
+    if (definitions.length === 0) break;
 
-    // Replace obj.key(args) / obj['key'](args) with inlined expressions
+    // Phase 2: Collect ALL assignments to each variable name (for invalidation)
+    const assignmentPositions = new Map(); // name -> sorted [start]
+
+    traverse(ast, {
+      VariableDeclarator(path) {
+        if (!t.isIdentifier(path.node.id)) return;
+        const name = path.node.id.name;
+        if (!assignmentPositions.has(name)) assignmentPositions.set(name, []);
+        assignmentPositions.get(name).push(path.node.start);
+      },
+      AssignmentExpression(path) {
+        if (path.node.operator !== "=") return;
+        if (!t.isIdentifier(path.node.left)) return;
+        const name = path.node.left.name;
+        if (!assignmentPositions.has(name)) assignmentPositions.set(name, []);
+        assignmentPositions.get(name).push(path.node.start);
+      },
+    });
+
+    for (const positions of assignmentPositions.values()) {
+      positions.sort((a, b) => a - b);
+    }
+
+    // Phase 3: Compute validity range for each definition
+    for (const def of definitions) {
+      const positions = assignmentPositions.get(def.name) || [];
+      for (const pos of positions) {
+        if (pos > def.start) {
+          def.end = pos;
+          break;
+        }
+      }
+    }
+
+    log("Pass", pass, ": found", definitions.length, "objects with proxy functions");
+
+    // Phase 4: Replace obj.key(args) / obj['key'](args) with inlined expressions
     traverse(ast, {
       CallExpression(path) {
         const callee = path.node.callee;
         if (!t.isMemberExpression(callee)) return;
         if (!t.isIdentifier(callee.object)) return;
 
-        const entry = proxyMaps.get(callee.object.name);
-        if (!entry) return;
+        // Resolve position: try node itself, then walk up parents for cloned nodes
+        let refPos = path.node.start;
+        if (refPos === undefined) {
+          let pp = path.parentPath;
+          while (pp && pp.node && pp.node.start === undefined) pp = pp.parentPath;
+          if (pp && pp.node) refPos = pp.node.start;
+        }
+
+        const varName = callee.object.name;
+
+        // Find the most recent applicable definition
+        let bestDef = null;
+        if (refPos !== undefined) {
+          for (const def of definitions) {
+            if (def.name !== varName) continue;
+            if (def.start >= refPos) continue;
+            if (refPos >= def.end) continue;
+            if (!bestDef || def.start > bestDef.start) {
+              bestDef = def;
+            }
+          }
+        } else {
+          // No position available: only safe if there's exactly one definition for this name
+          const matching = definitions.filter(d => d.name === varName);
+          if (matching.length === 1) bestDef = matching[0];
+        }
+
+        if (!bestDef) return;
 
         // Resolve property key
         let key = null;
@@ -123,7 +194,7 @@ function objectProxyInlining(ast) {
         }
         if (key === null) return;
 
-        const proxy = entry.get(key);
+        const proxy = bestDef.funcMap.get(key);
         if (!proxy) return;
 
         // Verify argument count matches parameter count
@@ -147,6 +218,13 @@ function objectProxyInlining(ast) {
     log("Pass", pass, ":", changes, "inlines");
     totalChanges += changes;
     if (changes === 0) break;
+
+    // Refresh scopes
+    traverse(ast, {
+      Program(path) {
+        path.scope.crawl();
+      },
+    });
   }
 
   log("Total changes:", totalChanges, "in", pass, "passes");

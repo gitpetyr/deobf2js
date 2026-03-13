@@ -6,11 +6,7 @@ const {
   findShuffleIIFEs,
   findDecoderFunctions,
 } = require("../utils/astHelpers");
-const {
-  createSandbox,
-  executeInSandbox,
-  callFunctionInSandbox,
-} = require("../utils/sandbox");
+const { createJsdomInstance } = require("../utils/sandbox");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -49,7 +45,21 @@ function evaluateArg(node) {
   return undefined;
 }
 
-function stringDecryptor(ast) {
+/**
+ * Create a sandbox instance based on the requested type.
+ * @param {string} sandboxType - "jsdom" (default) or "playwright"
+ */
+async function createSandboxInstance(sandboxType) {
+  if (sandboxType === "playwright") {
+    const { createPlaywrightInstance } = require("../utils/playwrightSandbox");
+    return await createPlaywrightInstance();
+  }
+  return createJsdomInstance();
+}
+
+async function stringDecryptor(ast, options = {}) {
+  const sandboxType = options.sandboxType || "jsdom";
+
   // Step 1: Detect components
   const stringArrays = findStringArrays(ast);
   const arrayNames = stringArrays.map((sa) => sa.name);
@@ -103,11 +113,13 @@ function stringDecryptor(ast) {
   log("Bootstrap code length:", bootstrapCode.length);
 
   // Step 3: Execute in sandbox
-  const { context } = createSandbox();
+  log("Creating sandbox (type:", sandboxType + ")...");
+  const sandbox = await createSandboxInstance(sandboxType);
   try {
-    executeInSandbox(context, bootstrapCode);
+    await sandbox.execute(bootstrapCode);
   } catch (err) {
     log("Sandbox execution error:", err.message);
+    await sandbox.close();
     return { consumedPaths: [] };
   }
   log("Sandbox execution successful");
@@ -156,31 +168,52 @@ function stringDecryptor(ast) {
   // Step 5: Replace decoder calls with resolved strings
   let replacedCount = 0;
 
+  for (const calleeName of aliasMap.keys()) {
+    const originalDecoder = aliasMap.get(calleeName);
+
+    traverse(ast, {
+      CallExpression(path) {
+        const callee = path.node.callee;
+        if (!t.isIdentifier(callee)) return;
+        if (callee.name !== calleeName) return;
+
+        const args = path.node.arguments;
+        const evalArgs = args.map(evaluateArg);
+        if (evalArgs.some((a) => a === undefined)) return;
+
+        // Mark for replacement (collect, don't await inside traverse)
+        path.__pendingArgs = evalArgs;
+        path.__pendingDecoder = originalDecoder;
+      },
+    });
+  }
+
+  // Batch-resolve all pending calls
+  const pendingPaths = [];
   traverse(ast, {
     CallExpression(path) {
-      const callee = path.node.callee;
-      if (!t.isIdentifier(callee)) return;
-      if (!aliasMap.has(callee.name)) return;
-
-      const originalDecoder = aliasMap.get(callee.name);
-      const args = path.node.arguments;
-      const evalArgs = args.map(evaluateArg);
-
-      if (evalArgs.some((a) => a === undefined)) return;
-
-      try {
-        const result = callFunctionInSandbox(context, originalDecoder, evalArgs);
-        if (typeof result === "string") {
-          path.replaceWith(t.stringLiteral(result));
-          replacedCount++;
-        }
-      } catch (err) {
-        log("Call evaluation failed for", callee.name, ":", err.message);
+      if (path.__pendingArgs) {
+        pendingPaths.push(path);
       }
     },
   });
 
+  for (const path of pendingPaths) {
+    try {
+      const result = await sandbox.call(path.__pendingDecoder, path.__pendingArgs);
+      if (typeof result === "string") {
+        path.replaceWith(t.stringLiteral(result));
+        replacedCount++;
+      }
+    } catch (err) {
+      log("Call evaluation failed for", path.__pendingDecoder, ":", err.message);
+    }
+  }
+
   log("Replaced", replacedCount, "decoder calls");
+
+  // Cleanup
+  await sandbox.close();
 
   // Step 6: Collect consumed paths
   const consumedPaths = [];
