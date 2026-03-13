@@ -7,6 +7,34 @@ function log(...args) {
     process.stderr.write("[deadCodeElimination] " + args.join(" ") + "\n");
 }
 
+// Check if an AST node is free of side effects
+function isPure(node) {
+  if (!node) return true;
+  if (t.isLiteral(node)) return true;
+  if (t.isIdentifier(node)) return true;
+  if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node))
+    return true;
+  if (t.isObjectExpression(node)) {
+    return node.properties.every((p) => {
+      if (t.isSpreadElement(p)) return false;
+      if (t.isObjectMethod(p)) return true;
+      return isPure(p.key) && isPure(p.value);
+    });
+  }
+  if (t.isArrayExpression(node)) {
+    return node.elements.every((e) => e === null || isPure(e));
+  }
+  if (t.isUnaryExpression(node) && node.operator !== "delete")
+    return isPure(node.argument);
+  if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
+    return isPure(node.left) && isPure(node.right);
+  if (t.isConditionalExpression(node))
+    return isPure(node.test) && isPure(node.consequent) && isPure(node.alternate);
+  if (t.isTemplateLiteral(node))
+    return node.expressions.every((e) => isPure(e));
+  return false;
+}
+
 function deadCodeElimination(ast, consumedPaths) {
   let removedCount = 0;
 
@@ -88,7 +116,81 @@ function deadCodeElimination(ast, consumedPaths) {
   });
 
   log("Removed", deadCount, "unreferenced declarations");
-  return removedCount + deadCount;
+
+  // Step 3: Dead store elimination inside function bodies (not top-level)
+  // Iterative — removing one dead store may expose others (e.g. O = U; then U = {...})
+  let deadStoreCount = 0;
+  let dsChanged = true;
+  while (dsChanged) {
+    dsChanged = false;
+
+    traverse(ast, {
+      Program(path) {
+        path.scope.crawl();
+      },
+    });
+
+    traverse(ast, {
+      // Remove: ExpressionStatement { x = <pure>; } where x is never read
+      ExpressionStatement(path) {
+        if (!path.getFunctionParent()) return;
+
+        const expr = path.node.expression;
+        if (!t.isAssignmentExpression(expr) || expr.operator !== "=") return;
+        if (!t.isIdentifier(expr.left)) return;
+
+        const name = expr.left.name;
+        const binding = path.scope.getBinding(name);
+        if (!binding) return;
+
+        // Only handle bindings local to the enclosing function
+        const funcParent = path.getFunctionParent();
+        if (binding.scope !== funcParent.scope) return;
+
+        if (binding.referencePaths.length > 0) return;
+        if (!isPure(expr.right)) return;
+
+        log("Removing dead store:", name);
+        path.remove();
+        deadStoreCount++;
+        dsChanged = true;
+      },
+
+      // Remove: var/let/const x = <pure>; where x is never read or reassigned
+      VariableDeclarator(path) {
+        if (!path.getFunctionParent()) return;
+        if (!t.isIdentifier(path.node.id)) return;
+
+        const name = path.node.id.name;
+        const binding = path.scope.getBinding(name);
+        if (!binding) return;
+
+        const funcParent = path.getFunctionParent();
+        if (binding.scope !== funcParent.scope) return;
+
+        if (binding.referencePaths.length > 0) return;
+        if (binding.constantViolations.length > 0) return;
+
+        if (path.node.init && !isPure(path.node.init)) return;
+
+        log("Removing dead variable:", name);
+        const declaration = path.parentPath;
+        if (
+          t.isVariableDeclaration(declaration.node) &&
+          declaration.node.declarations.length === 1
+        ) {
+          declaration.remove();
+        } else {
+          path.remove();
+        }
+        deadStoreCount++;
+        dsChanged = true;
+      },
+    });
+  }
+
+  log("Removed", deadStoreCount, "dead stores");
+  return removedCount + deadCount + deadStoreCount;
 }
 
 module.exports = deadCodeElimination;
