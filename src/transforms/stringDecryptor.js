@@ -7,6 +7,7 @@ const {
   findDecoderFunctions,
 } = require("../utils/astHelpers");
 const { createJsdomInstance } = require("../utils/sandbox");
+const { referencesAny } = require("../utils/taintAnalysis");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -59,6 +60,7 @@ async function createSandboxInstance(sandboxType) {
 
 async function stringDecryptor(ast, options = {}) {
   const sandboxType = options.sandboxType || "jsdom";
+  const taintedNames = options.taintedNames || new Set();
 
   // Step 1: Detect components
   const stringArrays = findStringArrays(ast);
@@ -175,6 +177,15 @@ async function stringDecryptor(ast, options = {}) {
         const callee = path.node.callee;
         if (!t.isIdentifier(callee)) return;
         if (callee.name !== calleeName) return;
+
+        // Skip if any argument references a tainted (preserved) variable
+        if (taintedNames.size > 0) {
+          const argsTainted = path.node.arguments.some(arg => referencesAny(arg, taintedNames));
+          if (argsTainted) {
+            log("Skipping tainted decoder call:", calleeName);
+            return;
+          }
+        }
 
         const args = path.node.arguments;
         const evalArgs = args.map(evaluateArg);

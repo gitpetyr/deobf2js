@@ -13,6 +13,7 @@ const antiDebugRemoval = require("./transforms/antiDebugRemoval");
 const commaExpressionSplitter = require("./transforms/commaExpressionSplitter");
 const objectPropertyCollapse = require("./transforms/objectPropertyCollapse");
 const aiRefine = require("./transforms/aiRefine");
+const { computeTaintedNames } = require("./utils/taintAnalysis");
 
 const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
 function log(...args) {
@@ -143,6 +144,14 @@ async function main() {
     aiBaseURL = process.argv[aiBaseURLIdx + 1];
   }
 
+  // Parse --preserve flag
+  let preserveNames = new Set();
+  const preserveIdx = process.argv.indexOf("--preserve");
+  if (preserveIdx !== -1 && process.argv[preserveIdx + 1]) {
+    preserveNames = new Set(process.argv[preserveIdx + 1].split(",").map(s => s.trim()).filter(Boolean));
+    log("Preserve variables:", [...preserveNames].join(", "));
+  }
+
   // Step 1: Read input
   log("Reading input:", inputPath);
   const code = fs.readFileSync(inputPath, "utf-8");
@@ -174,6 +183,9 @@ async function main() {
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     log("=== Pipeline iteration", iteration, "===");
     let iterationChanges = 0;
+
+    // Compute tainted variable set for this iteration
+    const taintedNames = computeTaintedNames(ast, preserveNames);
 
     // Phase 1: Constant folding (!![] -> true, +[] -> 0)
     log("Running constant folding...");
@@ -207,20 +219,20 @@ async function main() {
 
     // Phase 5: String decryption
     log("Running string decryption...");
-    const { consumedPaths } = await stringDecryptor(ast, { sandboxType });
+    const { consumedPaths } = await stringDecryptor(ast, { sandboxType, taintedNames });
     log("String decryption complete,", consumedPaths.length, "nodes consumed");
     allConsumedPaths.push(...consumedPaths);
     iterationChanges += consumedPaths.length;
 
     // Phase 6: Copy propagation
     log("Running copy propagation...");
-    const copyChanges = copyPropagation(ast);
+    const copyChanges = copyPropagation(ast, taintedNames);
     log("Copy propagation complete,", copyChanges, "changes");
     iterationChanges += copyChanges;
 
     // Phase 7: Dead code elimination
     log("Running dead code elimination...");
-    const deadRemoved = deadCodeElimination(ast, consumedPaths);
+    const deadRemoved = deadCodeElimination(ast, consumedPaths, taintedNames);
     log("Dead code elimination complete,", deadRemoved, "nodes removed");
     iterationChanges += deadRemoved;
 

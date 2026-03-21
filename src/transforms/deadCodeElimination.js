@@ -52,7 +52,8 @@ function isPure(node) {
   return false;
 }
 
-function deadCodeElimination(ast, consumedPaths) {
+function deadCodeElimination(ast, consumedPaths, taintedNames) {
+  taintedNames = taintedNames || new Set();
   let removedCount = 0;
 
   // Collect consumed node names so Step 2 only removes related infrastructure
@@ -93,6 +94,7 @@ function deadCodeElimination(ast, consumedPaths) {
   traverse(ast, {
     FunctionDeclaration(path) {
       const name = path.node.id.name;
+      if (taintedNames.has(name)) return;
       const binding = path.scope.getBinding(name);
       if (!binding || binding.referencePaths.length > 0) return;
       // Only remove if the function body referenced a consumed name
@@ -108,6 +110,11 @@ function deadCodeElimination(ast, consumedPaths) {
 
       for (const declarator of declarators) {
         if (!t.isIdentifier(declarator.node.id)) {
+          allDead = false;
+          continue;
+        }
+        // Skip tainted variables
+        if (taintedNames.has(declarator.node.id.name)) {
           allDead = false;
           continue;
         }

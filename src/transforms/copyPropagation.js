@@ -6,7 +6,8 @@ function log(...args) {
   if (verbose) process.stderr.write("[copyPropagation] " + args.join(" ") + "\n");
 }
 
-function copyPropagation(ast) {
+function copyPropagation(ast, taintedNames) {
+  taintedNames = taintedNames || new Set();
   let totalChanges = 0;
   let pass = 0;
 
@@ -18,6 +19,9 @@ function copyPropagation(ast) {
       VariableDeclarator(path) {
         const id = path.node.id;
         if (!t.isIdentifier(id)) return;
+
+        // Skip tainted variables (preserve seed computation chains)
+        if (taintedNames.has(id.name)) return;
 
         const init = path.node.init;
         if (!init) return;
@@ -62,6 +66,10 @@ function copyPropagation(ast) {
         const right = path.node.right;
 
         if (!t.isIdentifier(left)) return;
+
+        // Skip tainted variables
+        if (taintedNames.has(left.name)) return;
+
         if (!t.isIdentifier(right) && !t.isLiteral(right)) return;
 
         const binding = path.scope.getBinding(left.name);

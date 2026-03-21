@@ -37,6 +37,10 @@ def main():
         "--ai-base-url", default=None,
         help="Custom API base URL (auto-appends /v1 unless URL ends with /)"
     )
+    parser.add_argument(
+        "--preserve", default=None,
+        help="Comma-separated variable names to preserve (seed variables)"
+    )
     args = parser.parse_args()
 
     # Check node is available
@@ -77,12 +81,14 @@ def main():
         cmd += ["--ai-model", args.ai_model]
     if args.ai_base_url:
         cmd += ["--ai-base-url", args.ai_base_url]
+    if args.preserve:
+        cmd += ["--preserve", args.preserve]
 
     timeout = 300 if args.ai_provider else 60
     result = subprocess.run(
         cmd,
         env=env,
-        timeout=timeout,
+        # timeout=timeout,
     )
 
     sys.exit(result.returncode)
