@@ -202,6 +202,88 @@ const result = await deobfuscate(code, {
 
 支持的插件阶段：`afterParse`、`afterPrepare`、`afterDeobfuscate`、`afterUnminify`、`afterTranspile`、`afterUnpack`
 
+## MCP Server（Claude Code 集成）
+
+deobf2js 内置 MCP (Model Context Protocol) 服务器，可以作为 Claude Code 的工具直接使用。
+
+### Docker 方式（推荐）
+
+镜像自动通过 GitHub Actions 构建并推送到 GHCR。
+
+**slim 镜像**（JSDOM 沙箱，~300MB，支持 amd64/arm64）：
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "deobf2js": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/gitpetyr/deobf2js-mcp:slim"]
+    }
+  }
+}
+```
+
+**full 镜像**（Playwright + Chromium，~1.5GB，仅 amd64）：
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "deobf2js": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/gitpetyr/deobf2js-mcp:latest"]
+    }
+  }
+}
+```
+
+### 本地方式（不需要 Docker）
+
+```bash
+cd /path/to/deobf2js && npm install
+```
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "deobf2js": {
+      "command": "node",
+      "args": ["/absolute/path/to/deobf2js/src/mcp-server.mjs"]
+    }
+  }
+}
+```
+
+### HTTP 传输模式
+
+```bash
+# Docker
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http ghcr.io/gitpetyr/deobf2js-mcp:slim
+
+# 本地
+node src/mcp-server.mjs --transport http
+```
+
+### 可用工具
+
+| 工具 | 说明 |
+|------|------|
+| `deobfuscate` | 完整管线：字符串解密、控制流反平坦化、常量折叠、代码美化、语法还原 |
+| `unminify` | 24 个代码美化 Transform |
+| `transpile` | 6 个现代语法还原 Transform |
+| `unpack` | Webpack 4/5 / Browserify 解包 |
+
+### 镜像架构
+
+| Tag | 架构 | 沙箱 | 大小 |
+|-----|------|------|------|
+| `slim` | amd64, arm64 | JSDOM | ~300MB |
+| `latest` / `full` | amd64, arm64 | Playwright + Chromium | ~1.5GB |
+
+> slim 镜像体积更小、拉取更快，适合大多数场景。full 镜像包含完整 Chromium 浏览器沙箱，适合有反检测需求的代码。
+
 ## 编程 API
 
 ```js
@@ -241,6 +323,7 @@ deobf2js/
 ├── src/
 │   ├── cli.js                        # Commander CLI 入口
 │   ├── index.js                      # 库 API：deobfuscate()
+│   ├── mcp-server.mjs                # MCP Server 入口 (stdio/HTTP)
 │   ├── plugin.js                     # 插件系统
 │   ├── transforms/
 │   │   ├── framework.js              # Transform 框架 (applyTransform, mergeTransforms)
@@ -285,6 +368,8 @@ deobf2js/
 │       └── logger.js               # 统一日志
 ├── test/                           # Vitest 测试 (200+ tests)
 ├── playground/                     # Vue 3 + Vite Web Playground
+├── Dockerfile                      # 多阶段构建 (slim/full)
+├── .github/workflows/docker.yml    # GHCR 自动构建 (amd64+arm64)
 └── package.json
 ```
 

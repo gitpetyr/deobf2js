@@ -22,12 +22,17 @@ async function createPlaywrightInstance() {
   chromium.use(StealthPlugin());
 
   log("Launching Chromium (stealth)...");
+  const launchArgs = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+  ];
+  // Docker/CI environments typically need --no-sandbox
+  if (process.env.CHROMIUM_NO_SANDBOX === "1") {
+    launchArgs.push("--no-sandbox");
+  }
   const browser = await chromium.launch({
     headless: true,
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--disable-dev-shm-usage",
-    ],
+    args: launchArgs,
   });
 
   const ctx = await browser.newContext({

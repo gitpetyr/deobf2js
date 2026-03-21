@@ -1,0 +1,11 @@
+node_modules
+.git
+learning
+playground
+test
+docs
+.claude
+.github
+*.md
+!package.json
+!package-lock.json
