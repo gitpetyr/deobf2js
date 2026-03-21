@@ -187,7 +187,25 @@ function createJsdomInstance() {
   };
 }
 
+/**
+ * Create a sandbox instance by type.
+ * @param {"jsdom"|"playwright"|"isolated-vm"} [type="jsdom"]
+ * @returns {Promise<{type: string, execute: function, call: function, close: function}>}
+ */
+async function createSandboxInstance(type = "jsdom") {
+  if (type === "playwright") {
+    const { createPlaywrightInstance } = require("./playwrightSandbox");
+    return await createPlaywrightInstance();
+  }
+  if (type === "isolated-vm") {
+    const { createIsolatedVmInstance } = require("./isolatedVmSandbox");
+    return await createIsolatedVmInstance();
+  }
+  return createJsdomInstance();
+}
+
 module.exports = {
   createSandbox, executeInSandbox, callFunctionInSandbox,
   createJsdomInstance,
+  createSandboxInstance,
 };

@@ -1,10 +1,8 @@
 const traverse = require("@babel/traverse").default;
 const t = require("@babel/types");
 
-const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
-function log(...args) {
-  if (verbose) process.stderr.write("[controlFlowUnflattening] " + args.join(" ") + "\n");
-}
+const { createLogger } = require("../utils/logger");
+const { log } = createLogger("controlFlowUnflattening");
 
 /**
  * Try to resolve a string-split order array from an AST node.
@@ -111,106 +109,109 @@ function findOrderRemovePath(orderNode, scope) {
   return null;
 }
 
-function controlFlowUnflattening(ast) {
-  let totalChanges = 0;
+module.exports = {
+  name: "controlFlowUnflattening",
+  tags: ["unsafe"],
 
-  traverse(ast, {
-    WhileStatement(path) {
-      // Test must be `true`
-      if (!t.isBooleanLiteral(path.node.test, { value: true })) return;
+  run(ast, state) {
+    let totalChanges = 0;
 
-      const whileBody = path.node.body;
-      if (!t.isBlockStatement(whileBody)) return;
+    traverse(ast, {
+      WhileStatement(path) {
+        // Test must be `true`
+        if (!t.isBooleanLiteral(path.node.test, { value: true })) return;
 
-      const stmts = whileBody.body;
-      // Body: SwitchStatement followed by BreakStatement
-      if (stmts.length !== 2) return;
-      if (!t.isSwitchStatement(stmts[0]) || !t.isBreakStatement(stmts[1])) return;
+        const whileBody = path.node.body;
+        if (!t.isBlockStatement(whileBody)) return;
 
-      const switchNode = stmts[0];
+        const stmts = whileBody.body;
+        // Body: SwitchStatement followed by BreakStatement
+        if (stmts.length !== 2) return;
+        if (!t.isSwitchStatement(stmts[0]) || !t.isBreakStatement(stmts[1])) return;
 
-      // Discriminant must be order[idx++] — a MemberExpression with UpdateExpression
-      const disc = switchNode.discriminant;
-      if (!t.isMemberExpression(disc) || !disc.computed) return;
+        const switchNode = stmts[0];
 
-      // Property: idx++ (UpdateExpression with ++ postfix or prefix)
-      const prop = disc.property;
-      if (!t.isUpdateExpression(prop) || prop.operator !== "++") return;
-      if (!t.isIdentifier(prop.argument)) return;
-      const indexVarName = prop.argument.name;
+        // Discriminant must be order[idx++] — a MemberExpression with UpdateExpression
+        const disc = switchNode.discriminant;
+        if (!t.isMemberExpression(disc) || !disc.computed) return;
 
-      // Object: the order array variable
-      const orderNode = disc.object;
+        // Property: idx++ (UpdateExpression with ++ postfix or prefix)
+        const prop = disc.property;
+        if (!t.isUpdateExpression(prop) || prop.operator !== "++") return;
+        if (!t.isIdentifier(prop.argument)) return;
+        const indexVarName = prop.argument.name;
 
-      // Resolve the order array
-      const orderArray = resolveOrderArray(orderNode, path.scope);
-      if (!orderArray || orderArray.length === 0) {
-        log("Could not resolve order array");
-        return;
-      }
-      log("Order array:", orderArray.join(", "));
+        // Object: the order array variable
+        const orderNode = disc.object;
 
-      // Build case map: caseValue -> [statements]
-      const caseMap = new Map();
-      for (const caseClause of switchNode.cases) {
-        if (!caseClause.test || !t.isStringLiteral(caseClause.test)) return;
-        const key = caseClause.test.value;
-        // Strip trailing ContinueStatement
-        const body = [...caseClause.consequent];
-        if (body.length > 0 && t.isContinueStatement(body[body.length - 1])) {
-          body.pop();
-        }
-        caseMap.set(key, body);
-      }
-
-      // Verify all order entries have corresponding cases
-      for (const key of orderArray) {
-        if (!caseMap.has(key)) {
-          log("Missing case for order key:", key);
+        // Resolve the order array
+        const orderArray = resolveOrderArray(orderNode, path.scope);
+        if (!orderArray || orderArray.length === 0) {
+          log("Could not resolve order array");
           return;
         }
-      }
+        log("Order array:", orderArray.join(", "));
 
-      // Build sequential statements in order
-      const sequential = [];
-      for (const key of orderArray) {
-        sequential.push(...caseMap.get(key));
-      }
+        // Build case map: caseValue -> [statements]
+        const caseMap = new Map();
+        for (const caseClause of switchNode.cases) {
+          if (!caseClause.test || !t.isStringLiteral(caseClause.test)) return;
+          const key = caseClause.test.value;
+          // Strip trailing ContinueStatement
+          const body = [...caseClause.consequent];
+          if (body.length > 0 && t.isContinueStatement(body[body.length - 1])) {
+            body.pop();
+          }
+          caseMap.set(key, body);
+        }
 
-      // Collect paths to remove: order array declaration, index variable declaration
-      const pathsToRemove = [];
+        // Verify all order entries have corresponding cases
+        for (const key of orderArray) {
+          if (!caseMap.has(key)) {
+            log("Missing case for order key:", key);
+            return;
+          }
+        }
 
-      const orderRemovePath = findOrderRemovePath(orderNode, path.scope);
-      if (orderRemovePath) pathsToRemove.push(orderRemovePath);
+        // Build sequential statements in order
+        const sequential = [];
+        for (const key of orderArray) {
+          sequential.push(...caseMap.get(key));
+        }
 
-      const indexInfo = resolveIndexVar(indexVarName, path.scope);
-      if (indexInfo) pathsToRemove.push(indexInfo.removePath);
+        // Collect paths to remove: order array declaration, index variable declaration
+        const pathsToRemove = [];
 
-      // Replace the while loop with sequential statements
-      path.replaceWithMultiple(sequential);
-      totalChanges++;
+        const orderRemovePath = findOrderRemovePath(orderNode, path.scope);
+        if (orderRemovePath) pathsToRemove.push(orderRemovePath);
 
-      // Remove infrastructure declarations
-      for (const p of pathsToRemove) {
-        if (t.isVariableDeclarator(p.node)) {
-          const parent = p.parent;
-          if (t.isVariableDeclaration(parent) && parent.declarations.length === 1) {
-            p.parentPath.remove();
+        const indexInfo = resolveIndexVar(indexVarName, path.scope);
+        if (indexInfo) pathsToRemove.push(indexInfo.removePath);
+
+        // Replace the while loop with sequential statements
+        path.replaceWithMultiple(sequential);
+        totalChanges++;
+
+        // Remove infrastructure declarations
+        for (const p of pathsToRemove) {
+          if (t.isVariableDeclarator(p.node)) {
+            const parent = p.parent;
+            if (t.isVariableDeclaration(parent) && parent.declarations.length === 1) {
+              p.parentPath.remove();
+            } else {
+              p.remove();
+            }
           } else {
+            // ExpressionStatement or other removable path
             p.remove();
           }
-        } else {
-          // ExpressionStatement or other removable path
-          p.remove();
         }
-      }
 
-      log("Unflattened 1 while-switch block into", sequential.length, "statements");
-    },
-  });
+        log("Unflattened 1 while-switch block into", sequential.length, "statements");
+      },
+    });
 
-  log("Total changes:", totalChanges);
-  return totalChanges;
-}
-
-module.exports = controlFlowUnflattening;
+    log("Total changes:", totalChanges);
+    state.changes += totalChanges;
+  },
+};

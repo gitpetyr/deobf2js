@@ -1,129 +1,130 @@
 const traverse = require("@babel/traverse").default;
 const t = require("@babel/types");
 
-const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
-function log(...args) {
-  if (verbose) process.stderr.write("[copyPropagation] " + args.join(" ") + "\n");
-}
+const { createLogger } = require("../utils/logger");
+const { log } = createLogger("copyPropagation");
 
-function copyPropagation(ast, taintedNames) {
-  taintedNames = taintedNames || new Set();
-  let totalChanges = 0;
-  let pass = 0;
+module.exports = {
+  name: "copyPropagation",
+  tags: ["safe"],
 
-  while (true) {
-    pass++;
-    let changes = 0;
+  run(ast, state, options) {
+    const taintedNames = (options && options.taintedNames) || new Set();
+    let totalChanges = 0;
+    let pass = 0;
 
-    traverse(ast, {
-      VariableDeclarator(path) {
-        const id = path.node.id;
-        if (!t.isIdentifier(id)) return;
+    while (true) {
+      pass++;
+      let changes = 0;
 
-        // Skip tainted variables (preserve seed computation chains)
-        if (taintedNames.has(id.name)) return;
+      traverse(ast, {
+        VariableDeclarator(path) {
+          const id = path.node.id;
+          if (!t.isIdentifier(id)) return;
 
-        const init = path.node.init;
-        if (!init) return;
+          // Skip tainted variables (preserve seed computation chains)
+          if (taintedNames.has(id.name)) return;
 
-        // Only propagate Identifiers and Literals
-        if (!t.isIdentifier(init) && !t.isLiteral(init)) return;
+          const init = path.node.init;
+          if (!init) return;
 
-        const binding = path.scope.getBinding(id.name);
-        if (!binding) return;
-        if (!binding.constant || binding.constantViolations.length > 0) return;
+          // Only propagate Identifiers and Literals
+          if (!t.isIdentifier(init) && !t.isLiteral(init)) return;
 
-        const refs = binding.referencePaths;
-        if (refs.length === 0) return;
+          const binding = path.scope.getBinding(id.name);
+          if (!binding) return;
+          if (!binding.constant || binding.constantViolations.length > 0) return;
 
-        // Replace all references with the init value
-        for (const ref of refs) {
-          if (ref.node === id) continue; // skip the declarator's own id
-          if (t.isIdentifier(init)) {
-            ref.replaceWith(t.identifier(init.name));
+          const refs = binding.referencePaths;
+          if (refs.length === 0) return;
+
+          // Replace all references with the init value
+          for (const ref of refs) {
+            if (ref.node === id) continue; // skip the declarator's own id
+            if (t.isIdentifier(init)) {
+              ref.replaceWith(t.identifier(init.name));
+            } else {
+              ref.replaceWith(t.cloneNode(init));
+            }
+            changes++;
+          }
+
+          // Remove the declaration
+          const declaration = path.parentPath;
+          if (
+            t.isVariableDeclaration(declaration.node) &&
+            declaration.node.declarations.length === 1
+          ) {
+            declaration.remove();
           } else {
-            ref.replaceWith(t.cloneNode(init));
+            path.remove();
           }
           changes++;
-        }
+        },
 
-        // Remove the declaration
-        const declaration = path.parentPath;
-        if (
-          t.isVariableDeclaration(declaration.node) &&
-          declaration.node.declarations.length === 1
-        ) {
-          declaration.remove();
-        } else {
-          path.remove();
-        }
-        changes++;
-      },
+        AssignmentExpression(path) {
+          if (path.node.operator !== "=") return;
+          const left = path.node.left;
+          const right = path.node.right;
 
-      AssignmentExpression(path) {
-        if (path.node.operator !== "=") return;
-        const left = path.node.left;
-        const right = path.node.right;
+          if (!t.isIdentifier(left)) return;
 
-        if (!t.isIdentifier(left)) return;
+          // Skip tainted variables
+          if (taintedNames.has(left.name)) return;
 
-        // Skip tainted variables
-        if (taintedNames.has(left.name)) return;
+          if (!t.isIdentifier(right) && !t.isLiteral(right)) return;
 
-        if (!t.isIdentifier(right) && !t.isLiteral(right)) return;
+          const binding = path.scope.getBinding(left.name);
+          if (!binding) return;
 
-        const binding = path.scope.getBinding(left.name);
-        if (!binding) return;
-
-        if (binding.constant && binding.constantViolations.length === 0) {
-          // Handle assignment expression aliases: a = b where b is known
-          const refs = binding.referencePaths;
-          for (const ref of refs) {
-            if (ref.node === left) continue;
-            if (t.isIdentifier(right)) {
-              ref.replaceWith(t.identifier(right.name));
-            } else {
-              ref.replaceWith(t.cloneNode(right));
+          if (binding.constant && binding.constantViolations.length === 0) {
+            // Handle assignment expression aliases: a = b where b is known
+            const refs = binding.referencePaths;
+            for (const ref of refs) {
+              if (ref.node === left) continue;
+              if (t.isIdentifier(right)) {
+                ref.replaceWith(t.identifier(right.name));
+              } else {
+                ref.replaceWith(t.cloneNode(right));
+              }
+              changes++;
             }
-            changes++;
-          }
-        } else if (binding.constantViolations.length === 1 && !binding.constant) {
-          // Handle parameter reassignment with exactly 1 constant violation:
-          // function(uz, ...) { uz = s; ... uz(...) ... }
-          const violation = binding.constantViolations[0];
-          if (!violation.isAssignmentExpression() || violation.node !== path.node) return;
+          } else if (binding.constantViolations.length === 1 && !binding.constant) {
+            // Handle parameter reassignment with exactly 1 constant violation:
+            // function(uz, ...) { uz = s; ... uz(...) ... }
+            const violation = binding.constantViolations[0];
+            if (!violation.isAssignmentExpression() || violation.node !== path.node) return;
 
-          const assignLoc = path.node.start;
-          const refs = binding.referencePaths;
-          for (const ref of refs) {
-            if (ref.node === left) continue;
-            if (ref.node.start !== undefined && ref.node.start < assignLoc) continue;
-            if (t.isIdentifier(right)) {
-              ref.replaceWith(t.identifier(right.name));
-            } else {
-              ref.replaceWith(t.cloneNode(right));
+            const assignLoc = path.node.start;
+            const refs = binding.referencePaths;
+            for (const ref of refs) {
+              if (ref.node === left) continue;
+              if (ref.node.start !== undefined && ref.node.start < assignLoc) continue;
+              if (t.isIdentifier(right)) {
+                ref.replaceWith(t.identifier(right.name));
+              } else {
+                ref.replaceWith(t.cloneNode(right));
+              }
+              changes++;
             }
-            changes++;
           }
-        }
-      },
-    });
+        },
+      });
 
-    log("Pass", pass, ":", changes, "changes");
-    totalChanges += changes;
+      log("Pass", pass, ":", changes, "changes");
+      totalChanges += changes;
 
-    if (changes === 0) break;
+      if (changes === 0) break;
 
-    // Refresh stale bindings
-    traverse(ast, {
-      Program(path) {
-        path.scope.crawl();
-      },
-    });
-  }
+      // Refresh stale bindings
+      traverse(ast, {
+        Program(path) {
+          path.scope.crawl();
+        },
+      });
+    }
 
-  log("Total changes:", totalChanges, "in", pass, "passes");
-  return totalChanges;
-}
-
-module.exports = copyPropagation;
+    log("Total changes:", totalChanges, "in", pass, "passes");
+    state.changes += totalChanges;
+  },
+};

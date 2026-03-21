@@ -1,10 +1,7 @@
 const traverse = require("@babel/traverse").default;
 const t = require("@babel/types");
-
-const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
-function log(...args) {
-  if (verbose) process.stderr.write("[constantFolding] " + args.join(" ") + "\n");
-}
+const { createLogger } = require("../utils/logger");
+const { log } = createLogger("constantFolding");
 
 /**
  * Try to statically evaluate an AST node to a primitive value.
@@ -19,7 +16,7 @@ function tryEvaluate(node) {
     return { value: null };
   }
 
-  // Empty array expression: [] — used as intermediate for +[], ![]
+  // Empty array expression: [] -- used as intermediate for +[], ![]
   if (t.isArrayExpression(node) && node.elements.length === 0) {
     return { value: [] };
   }
@@ -90,106 +87,108 @@ function valueToNode(value) {
   return null;
 }
 
-function constantFolding(ast) {
-  let totalChanges = 0;
-  let pass = 0;
+module.exports = {
+  name: "constantFolding",
+  tags: ["safe"],
+  run(ast, state) {
+    let totalChanges = 0;
+    let pass = 0;
 
-  while (true) {
-    pass++;
-    let changes = 0;
+    while (true) {
+      pass++;
+      let changes = 0;
 
-    traverse(ast, {
-      UnaryExpression(path) {
-        const result = tryEvaluate(path.node);
-        if (result === null) return;
-        const { value } = result;
+      traverse(ast, {
+        UnaryExpression(path) {
+          const result = tryEvaluate(path.node);
+          if (result === null) return;
+          const { value } = result;
 
-        // Only replace with primitives, skip NaN/Infinity/-Infinity
-        if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
-        if (Array.isArray(value)) return;
+          // Only replace with primitives, skip NaN/Infinity/-Infinity
+          if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
+          if (Array.isArray(value)) return;
 
-        const replacement = valueToNode(value);
-        if (!replacement) return;
+          const replacement = valueToNode(value);
+          if (!replacement) return;
 
-        path.replaceWith(replacement);
-        changes++;
-      },
-      BinaryExpression(path) {
-        const result = tryEvaluate(path.node);
-        if (result === null) return;
-        const { value } = result;
+          path.replaceWith(replacement);
+          changes++;
+        },
+        BinaryExpression(path) {
+          const result = tryEvaluate(path.node);
+          if (result === null) return;
+          const { value } = result;
 
-        if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
-        if (Array.isArray(value)) return;
+          if (typeof value === "number" && (!Number.isFinite(value) || Number.isNaN(value))) return;
+          if (Array.isArray(value)) return;
 
-        const replacement = valueToNode(value);
-        if (!replacement) return;
+          const replacement = valueToNode(value);
+          if (!replacement) return;
 
-        path.replaceWith(replacement);
-        changes++;
-      },
+          path.replaceWith(replacement);
+          changes++;
+        },
 
-      // Dead branch elimination: if(true)/if(false)
-      IfStatement(path) {
-        const test = path.node.test;
-        if (!t.isBooleanLiteral(test)) return;
+        // Dead branch elimination: if(true)/if(false)
+        IfStatement(path) {
+          const test = path.node.test;
+          if (!t.isBooleanLiteral(test)) return;
 
-        if (test.value) {
-          // if (true) { A } else { B } → A
-          path.replaceWithMultiple(
-            t.isBlockStatement(path.node.consequent)
-              ? path.node.consequent.body
-              : [path.node.consequent]
-          );
-        } else {
-          // if (false) { A } else { B } → B or remove
-          if (path.node.alternate) {
+          if (test.value) {
+            // if (true) { A } else { B } -> A
             path.replaceWithMultiple(
-              t.isBlockStatement(path.node.alternate)
-                ? path.node.alternate.body
-                : [path.node.alternate]
+              t.isBlockStatement(path.node.consequent)
+                ? path.node.consequent.body
+                : [path.node.consequent]
             );
           } else {
-            path.remove();
+            // if (false) { A } else { B } -> B or remove
+            if (path.node.alternate) {
+              path.replaceWithMultiple(
+                t.isBlockStatement(path.node.alternate)
+                  ? path.node.alternate.body
+                  : [path.node.alternate]
+              );
+            } else {
+              path.remove();
+            }
           }
-        }
-        changes++;
-      },
-
-      // Dead branch elimination: true ? A : B → A, false ? A : B → B
-      ConditionalExpression(path) {
-        const test = path.node.test;
-        if (!t.isBooleanLiteral(test)) return;
-
-        path.replaceWith(test.value ? path.node.consequent : path.node.alternate);
-        changes++;
-      },
-
-      // Safe logical simplification (preserves side effects)
-      LogicalExpression(path) {
-        const { left, right, operator } = path.node;
-        if (!t.isBooleanLiteral(left)) return;
-
-        if (operator === "&&" && left.value === true) {
-          // true && x → x
-          path.replaceWith(right);
           changes++;
-        } else if (operator === "||" && left.value === false) {
-          // false || x → x
-          path.replaceWith(right);
+        },
+
+        // Dead branch elimination: true ? A : B -> A, false ? A : B -> B
+        ConditionalExpression(path) {
+          const test = path.node.test;
+          if (!t.isBooleanLiteral(test)) return;
+
+          path.replaceWith(test.value ? path.node.consequent : path.node.alternate);
           changes++;
-        }
-        // Skip: true || x, false && x — would discard x which may have side effects
-      },
-    });
+        },
 
-    log("Pass", pass, ":", changes, "folds");
-    totalChanges += changes;
-    if (changes === 0) break;
-  }
+        // Safe logical simplification (preserves side effects)
+        LogicalExpression(path) {
+          const { left, right, operator } = path.node;
+          if (!t.isBooleanLiteral(left)) return;
 
-  log("Total changes:", totalChanges, "in", pass, "passes");
-  return totalChanges;
-}
+          if (operator === "&&" && left.value === true) {
+            // true && x -> x
+            path.replaceWith(right);
+            changes++;
+          } else if (operator === "||" && left.value === false) {
+            // false || x -> x
+            path.replaceWith(right);
+            changes++;
+          }
+          // Skip: true || x, false && x -- would discard x which may have side effects
+        },
+      });
 
-module.exports = constantFolding;
+      log("Pass", pass, ":", changes, "folds");
+      totalChanges += changes;
+      if (changes === 0) break;
+    }
+
+    log("Total changes:", totalChanges, "in", pass, "passes");
+    state.changes += totalChanges;
+  },
+};

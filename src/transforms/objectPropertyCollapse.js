@@ -1,10 +1,7 @@
 const traverse = require("@babel/traverse").default;
 const t = require("@babel/types");
-
-const verbose = !!process.env.DEOBFUSCATOR_VERBOSE;
-function log(...args) {
-  if (verbose) process.stderr.write("[objectPropertyCollapse] " + args.join(" ") + "\n");
-}
+const { createLogger } = require("../utils/logger");
+const { log } = createLogger("objectPropertyCollapse");
 
 /**
  * Collapse incremental object property assignments into the object literal.
@@ -20,37 +17,6 @@ function log(...args) {
  * This normalization allows constantObjectInlining and objectProxyInlining
  * to handle these objects.
  */
-function objectPropertyCollapse(ast) {
-  let totalChanges = 0;
-
-  traverse(ast, {
-    // Handle: X = {}; X["key"] = value; ...
-    ExpressionStatement(path) {
-      const expr = path.node.expression;
-      if (!t.isAssignmentExpression(expr) || expr.operator !== "=") return;
-      if (!t.isIdentifier(expr.left)) return;
-      if (!t.isObjectExpression(expr.right)) return;
-      if (expr.right.properties.length > 0) return; // only empty objects
-
-      const varName = expr.left.name;
-      totalChanges += collapseProperties(path, varName, expr.right);
-    },
-    // Handle: var X = {}; X["key"] = value; ...
-    VariableDeclaration(path) {
-      if (path.node.declarations.length !== 1) return;
-      const decl = path.node.declarations[0];
-      if (!t.isIdentifier(decl.id)) return;
-      if (!decl.init || !t.isObjectExpression(decl.init)) return;
-      if (decl.init.properties.length > 0) return;
-
-      const varName = decl.id.name;
-      totalChanges += collapseProperties(path, varName, decl.init);
-    },
-  });
-
-  log("Collapsed", totalChanges, "property assignments into object literals");
-  return totalChanges;
-}
 
 function collapseProperties(path, varName, objExpr) {
   const siblings = path.getAllNextSiblings();
@@ -79,7 +45,7 @@ function collapseProperties(path, varName, objExpr) {
         key = t.stringLiteral(keyName);
       }
     } else {
-      break; // dynamic key — stop collecting
+      break; // dynamic key -- stop collecting
     }
 
     properties.push(t.objectProperty(key, expr.right));
@@ -99,4 +65,35 @@ function collapseProperties(path, varName, objExpr) {
   return properties.length;
 }
 
-module.exports = objectPropertyCollapse;
+module.exports = {
+  name: "objectPropertyCollapse",
+  tags: ["safe"],
+  run(ast, state) {
+    traverse(ast, {
+      // Handle: X = {}; X["key"] = value; ...
+      ExpressionStatement(path) {
+        const expr = path.node.expression;
+        if (!t.isAssignmentExpression(expr) || expr.operator !== "=") return;
+        if (!t.isIdentifier(expr.left)) return;
+        if (!t.isObjectExpression(expr.right)) return;
+        if (expr.right.properties.length > 0) return; // only empty objects
+
+        const varName = expr.left.name;
+        state.changes += collapseProperties(path, varName, expr.right);
+      },
+      // Handle: var X = {}; X["key"] = value; ...
+      VariableDeclaration(path) {
+        if (path.node.declarations.length !== 1) return;
+        const decl = path.node.declarations[0];
+        if (!t.isIdentifier(decl.id)) return;
+        if (!decl.init || !t.isObjectExpression(decl.init)) return;
+        if (decl.init.properties.length > 0) return;
+
+        const varName = decl.id.name;
+        state.changes += collapseProperties(path, varName, decl.init);
+      },
+    });
+
+    log("Collapsed", state.changes, "property assignments into object literals");
+  },
+};
