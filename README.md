@@ -1,4 +1,4 @@
-# JS Deobfuscator
+# deobf2js
 
 通用 JavaScript 反混淆框架。纯 Node.js + Babel AST 管线，支持反混淆、代码美化、现代语法还原、Bundle 解包、JSX 反编译和变量重命名，内置插件系统和多种沙箱后端。
 
@@ -237,7 +237,7 @@ console.log(result.code);
 ## 项目结构
 
 ```
-js-deobfuscator/
+deobf2js/
 ├── src/
 │   ├── cli.js                        # Commander CLI 入口
 │   ├── index.js                      # 库 API：deobfuscate()

@@ -7,7 +7,7 @@ const { deobfuscate } = require("./index");
 const program = new Command();
 
 program
-  .name("js-deobfuscate")
+  .name("deobf2js")
   .description("Universal JavaScript deobfuscation tool")
   .version(require("../package.json").version)
   .argument("<input>", "Input JavaScript file path")

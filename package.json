@@ -1,10 +1,20 @@
 {
-  "name": "js-deobfuscator",
+  "name": "deobf2js",
   "version": "1.0.0",
   "private": true,
   "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gitpetyr/deobf2js.git"
+  },
+  "author": "Liveless",
+  "license": "AGPL-3.0",
+  "homepage": "https://github.com/gitpetyr/deobf2js#readme",
+  "bugs": {
+    "url": "https://github.com/gitpetyr/deobf2js/issues"
+  },
   "bin": {
-    "js-deobfuscate": "src/cli.js"
+    "deobf2js": "src/cli.js"
   },
   "description": "Automated JS deobfuscation tool targeting Cloudflare Turnstile-style obfuscation",
   "scripts": {
