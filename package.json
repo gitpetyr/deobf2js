@@ -8,7 +8,7 @@
   },
   "description": "Automated JS deobfuscation tool targeting Cloudflare Turnstile-style obfuscation",
   "scripts": {
-    "deobfuscate": "node src/deobfuscator.js",
+    "deobfuscate": "node src/cli.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
