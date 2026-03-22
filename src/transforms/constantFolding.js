@@ -87,7 +87,7 @@ function valueToNode(value) {
   return null;
 }
 
-module.exports = {
+const constantFolding = {
   name: "constantFolding",
   tags: ["safe"],
   run(ast, state) {
@@ -192,3 +192,7 @@ module.exports = {
     state.changes += totalChanges;
   },
 };
+
+module.exports = constantFolding;
+module.exports.tryEvaluate = tryEvaluate;
+module.exports.valueToNode = valueToNode;
