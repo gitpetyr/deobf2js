@@ -181,7 +181,7 @@ function createJsdomInstance() {
   const { dom, context } = createSandbox();
   return {
     type: "jsdom",
-    async execute(code) { executeInSandbox(context, code); },
+    async execute(code) { return executeInSandbox(context, code); },
     async call(fnName, args) { return callFunctionInSandbox(context, fnName, args); },
     async close() { dom.window.close(); },
   };

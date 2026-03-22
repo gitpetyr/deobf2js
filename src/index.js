@@ -13,6 +13,9 @@ const controlFlowUnflattening = require("./transforms/controlFlowUnflattening");
 const antiDebugRemoval = require("./transforms/antiDebugRemoval");
 const commaExpressionSplitter = require("./transforms/commaExpressionSplitter");
 const objectPropertyCollapse = require("./transforms/objectPropertyCollapse");
+const functionInlining = require("./transforms/functionInlining");
+const pureFunctionEvaluation = require("./transforms/pureFunctionEvaluation");
+const deadFunctionElimination = require("./transforms/deadFunctionElimination");
 const aiRefine = require("./transforms/aiRefine");
 const unminify = require("./unminify");
 const transpile = require("./transpile");
@@ -39,6 +42,7 @@ async function deobfuscate(code, options = {}) {
     aiConfig = null,
     verbose = false,
     plugins = {},
+    aggressiveDce = false,
   } = options;
 
   if (verbose) {
@@ -114,6 +118,14 @@ async function deobfuscate(code, options = {}) {
       iterationChanges += s.changes;
     }
 
+    log("Running function inlining...");
+    {
+      const s = { changes: 0 };
+      functionInlining.run(ast, s, { taintedNames });
+      log("Function inlining complete,", s.changes, "changes");
+      iterationChanges += s.changes;
+    }
+
     log("Running control flow unflattening...");
     {
       const s = { changes: 0 };
@@ -151,6 +163,22 @@ async function deobfuscate(code, options = {}) {
     {
       const s = applyTransform(ast, commaExpressionSplitter);
       log("Comma expression splitting complete,", s.changes, "changes");
+      iterationChanges += s.changes;
+    }
+
+    log("Running pure function evaluation...");
+    {
+      const s = { changes: 0 };
+      await pureFunctionEvaluation.run(ast, s, { taintedNames, sandboxType });
+      log("Pure function evaluation complete,", s.changes, "changes");
+      iterationChanges += s.changes;
+    }
+
+    log("Running dead function elimination...");
+    {
+      const s = { changes: 0 };
+      deadFunctionElimination.run(ast, s, { taintedNames, aggressiveDce });
+      log("Dead function elimination complete,", s.changes, "changes");
       iterationChanges += s.changes;
     }
 

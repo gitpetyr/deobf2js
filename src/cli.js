@@ -28,6 +28,7 @@ program
   .option("--no-transpile", "Skip transpilation stage")
   .option("--no-unpack", "Skip bundle unpacking stage")
   .option("--no-jsx", "Skip JSX decompilation")
+  .option("--aggressive-dce", "Enable aggressive dead function elimination (removes top-level unused functions)")
   .option("-m, --mangle", "Mangle variable names")
   .option("-f, --force", "Overwrite output file if it exists")
   .action(async (input, opts) => {
@@ -83,6 +84,10 @@ program
     };
 
     deobfuscateOpts.mangle = !!opts.mangle;
+
+    if (opts.aggressiveDce) {
+      deobfuscateOpts.aggressiveDce = true;
+    }
 
     // Read input
     const code = fs.readFileSync(input, "utf-8");

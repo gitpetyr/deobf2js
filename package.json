@@ -1,6 +1,6 @@
 {
   "name": "deobf2js",
-  "version": "22.3.0",
+  "version": "22.3.2",
   "private": true,
   "main": "src/index.js",
   "repository": {
