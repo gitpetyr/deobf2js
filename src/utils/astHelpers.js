@@ -102,42 +102,59 @@ function findStringArrays(ast) {
     },
 
     // Pattern 3: function P(kY) { kY = "...".split("~"); P = function() { return kY; }; return P(); }
+    // Also handles comma-expression variant: function P(kY) { return kY = "...".split("~"), P = function() { return kY; }, P(); }
     FunctionDeclaration(path) {
       const node = path.node;
       if (!node.id || !t.isIdentifier(node.id)) return;
       const body = node.body.body;
-      if (body.length < 2) return;
+      if (body.length < 1) return;
 
       let hasSplitAssign = false;
       let hasSelfReassign = false;
       const fnName = node.id.name;
 
-      for (const stmt of body) {
-        // Look for: kY = "...".split("~")
+      // Check if an assignment expression matches the split pattern
+      function checkSplitAssign(expr) {
         if (
-          t.isExpressionStatement(stmt) &&
-          t.isAssignmentExpression(stmt.expression, { operator: "=" })
+          t.isAssignmentExpression(expr, { operator: "=" }) &&
+          t.isCallExpression(expr.right) &&
+          t.isMemberExpression(expr.right.callee) &&
+          t.isStringLiteral(expr.right.callee.object) &&
+          t.isIdentifier(expr.right.callee.property, { name: "split" }) &&
+          expr.right.arguments.length === 1 &&
+          t.isStringLiteral(expr.right.arguments[0])
         ) {
-          const right = stmt.expression.right;
-          if (
-            t.isCallExpression(right) &&
-            t.isMemberExpression(right.callee) &&
-            t.isStringLiteral(right.callee.object) &&
-            t.isIdentifier(right.callee.property, { name: "split" }) &&
-            right.arguments.length === 1 &&
-            t.isStringLiteral(right.arguments[0])
-          ) {
-            hasSplitAssign = true;
-          }
+          hasSplitAssign = true;
         }
-        // Look for: P = function() { return kY; }
+      }
+
+      // Check if an assignment expression matches the self-reassign pattern
+      function checkSelfReassign(expr) {
         if (
-          t.isExpressionStatement(stmt) &&
-          t.isAssignmentExpression(stmt.expression, { operator: "=" }) &&
-          t.isIdentifier(stmt.expression.left, { name: fnName }) &&
-          t.isFunctionExpression(stmt.expression.right)
+          t.isAssignmentExpression(expr, { operator: "=" }) &&
+          t.isIdentifier(expr.left, { name: fnName }) &&
+          t.isFunctionExpression(expr.right)
         ) {
           hasSelfReassign = true;
+        }
+      }
+
+      for (const stmt of body) {
+        // Separate statements: kY = "...".split("~"); P = function() { ... };
+        if (t.isExpressionStatement(stmt)) {
+          checkSplitAssign(stmt.expression);
+          checkSelfReassign(stmt.expression);
+        }
+        // Comma-expression in return: return kY = "...".split("~"), P = function() { ... }, P();
+        if (
+          t.isReturnStatement(stmt) &&
+          stmt.argument &&
+          t.isSequenceExpression(stmt.argument)
+        ) {
+          for (const expr of stmt.argument.expressions) {
+            checkSplitAssign(expr);
+            checkSelfReassign(expr);
+          }
         }
       }
 
