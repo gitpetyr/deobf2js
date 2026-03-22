@@ -47,9 +47,10 @@ objectProxyInlining handles `obj.method()` patterns. This transform handles stan
 - Example: `function add(a,b){return a+b}; add(1,2)` -> substitute -> `1+2` -> fold -> `3`
 - Zero risk, no sandbox needed
 
-**Layer 2: Sandbox Execution** (only when `sandboxType` is available)
+**Layer 2: Sandbox Execution** (uses the `sandboxType` from `--sandbox` CLI option, same as `stringDecryptor`)
 - For functions with more complex bodies that are still pure (no external variable references, no side-effect API calls)
-- Generate code string of function definition + call expression, send to existing sandbox
+- Generate code string of function definition + call expression, send to sandbox
+- Receives `sandboxType` via options parameter (e.g., `"playwright"`, `"jsdom"`, `"isolated-vm"`), respecting user's `--sandbox` setting
 - This is an **async** transform: creates its own sandbox instance via `createSandboxInstance(sandboxType)`, executes, then closes it in a `finally` block to prevent resource leaks. Called with `await` in the pipeline, similar to `stringDecryptor`.
 - Example: `function decode(n){var s="";for(var i=0;i<n;i++)s+=String.fromCharCode(65+i);return s} decode(3)` -> sandbox -> `"ABC"`
 
