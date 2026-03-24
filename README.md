@@ -33,6 +33,48 @@ node src/cli.js obfuscated.js -o clean.js --mangle
 npm run deobfuscate -- obfuscated.js -o clean.js -v
 ```
 
+## 环境变量配置
+
+### 临时设置（单次命令）
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-xxx node src/cli.js input.js -o output.js
+
+# Gemini
+GEMINI_API_KEY=xxx node src/cli.js input.js -o output.js
+
+# Claude
+ANTHROPIC_API_KEY=sk-ant-xxx node src/cli.js input.js -o output.js
+
+# 开启详细日志
+DEOBFUSCATOR_VERBOSE=1 node src/cli.js input.js -o output.js
+```
+
+### 全局设置（Linux/macOS）
+
+```bash
+# 添加到 ~/.bashrc 或 ~/.zshrc
+echo 'export OPENAI_API_KEY="sk-xxx"' >> ~/.bashrc
+echo 'export DEOBFUSCATOR_VERBOSE=1' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### .env 文件方式
+
+```bash
+# 创建 .env 文件（不要提交到版本控制）
+cat > .env << EOF
+OPENAI_API_KEY=sk-xxx
+DEOBFUSCATOR_VERBOSE=1
+EOF
+
+# 使用时加载
+source .env && node src/cli.js input.js -o output.js
+```
+
+> 注意：包含 API Key 的 .env 文件应添加到 .gitignore，避免意外提交。
+
 ## CLI 选项
 
 | 选项 | 说明 | 默认值 |
