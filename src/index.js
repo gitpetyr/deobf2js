@@ -80,6 +80,7 @@ async function deobfuscate(code, options = {}) {
   // ── Stage: Deobfuscate (iterative fixed-point loop) ──
   let totalChanges = 0;
   let iterations = 0;
+  let checkpointCode = null;
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     log("=== Pipeline iteration", iteration, "===");
@@ -185,6 +186,18 @@ async function deobfuscate(code, options = {}) {
     totalChanges += iterationChanges;
     log("Iteration", iteration, "total changes:", iterationChanges);
     if (iterationChanges === 0) break;
+
+    // Checkpoint every 8 iterations, save and return to allow restart
+    // Checkpoint at iteration 9 (when iteration >= 9), save and return to allow restart
+    if (iteration >= 9 && iteration < maxIterations) {
+      log("Checkpoint: saving state at iteration", iteration, "...");
+      checkpointCode = generate(ast, {
+        comments: true,
+        jsescOption: { minimal: true },
+      }).code;
+      log("Checkpoint saved. Run again to continue deobfuscation.");
+      break;
+    }
   }
 
   // [afterDeobfuscate] plugins
@@ -249,6 +262,7 @@ async function deobfuscate(code, options = {}) {
   return {
     code: finalCode,
     stats: { iterations, totalChanges },
+    checkpoint: checkpointCode || null,
   };
 }
 
