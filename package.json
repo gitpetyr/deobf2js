@@ -1,6 +1,6 @@
 {
   "name": "deobf2js",
-  "version": "22.3.0",
+  "version": "22.3.5",
   "private": true,
   "main": "src/index.js",
   "repository": {
@@ -39,7 +39,7 @@
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
-    "isolated-vm": "^5.0.0"
+    "isolated-vm": "^5.0.4"
   },
   "devDependencies": {
     "vitest": "^4.1.0"
