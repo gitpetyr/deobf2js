@@ -212,3 +212,9 @@ __marimo__/
 # Learning
 
 learning/
+
+# Claude Code
+
+.claude/
+CLAUDE.md
+docs/superpowers/
