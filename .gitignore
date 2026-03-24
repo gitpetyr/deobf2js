@@ -210,11 +210,9 @@ marimo/_lsp/
 __marimo__/
 
 # Learning
-
 learning/
 
 # Claude Code
-
 js/
 .claude/
 CLAUDE.md
