@@ -92,19 +92,8 @@ program
     // Read input
     const code = fs.readFileSync(input, "utf-8");
 
-    // Run deobfuscation
+    // Run
     const result = await deobfuscate(code, deobfuscateOpts);
-
-    // Check if checkpoint was saved (when iterations exceeded safe limit)
-    if (result.checkpoint) {
-      const tempFile = input + ".checkpoint.tmp";
-      fs.writeFileSync(tempFile, result.checkpoint, "utf-8");
-      if (opts.verbose) {
-        process.stderr.write(`[cli] Checkpoint saved to: ${tempFile}\n`);
-        process.stderr.write(`[cli] Run again with this file to continue deobfuscation\n`);
-      }
-      process.stderr.write(`[cli] Checkpoint: ${tempFile}\n`);
-    }
 
     // Write output
     if (opts.output) {

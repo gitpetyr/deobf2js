@@ -13,16 +13,8 @@ module.exports = {
     let totalChanges = 0;
     let pass = 0;
 
-    // Track processed binding paths to avoid infinite loops
-    const processedPaths = new Set();
-    const maxPasses = 20; // Safety limit
-
     while (true) {
       pass++;
-      if (pass > maxPasses) {
-        log("Warning: reached max passes, stopping");
-        break;
-      }
       let changes = 0;
 
       traverse(ast, {
@@ -42,10 +34,6 @@ module.exports = {
           const binding = path.scope.getBinding(id.name);
           if (!binding) return;
           if (!binding.constant || binding.constantViolations.length > 0) return;
-
-          // Skip if we've already processed this path
-          const pathKey = path.node.start + ":" + path.node.end;
-          if (processedPaths.has(pathKey)) return;
 
           const refs = binding.referencePaths;
           if (refs.length === 0) return;
@@ -72,9 +60,6 @@ module.exports = {
             path.remove();
           }
           changes++;
-
-          // Mark this path as processed
-          processedPaths.add(pathKey);
         },
 
         AssignmentExpression(path) {
@@ -91,10 +76,6 @@ module.exports = {
 
           const binding = path.scope.getBinding(left.name);
           if (!binding) return;
-
-          // Skip if we've already processed this path
-          const pathKey = path.node.start + ":" + path.node.end;
-          if (processedPaths.has(pathKey)) return;
 
           if (binding.constant && binding.constantViolations.length === 0) {
             // Handle assignment expression aliases: a = b where b is known
@@ -127,9 +108,6 @@ module.exports = {
               changes++;
             }
           }
-
-          // Mark this path as processed
-          processedPaths.add(pathKey);
         },
       });
 
