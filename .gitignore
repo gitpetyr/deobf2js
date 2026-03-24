@@ -215,6 +215,7 @@ learning/
 
 # Claude Code
 
+js/
 .claude/
 CLAUDE.md
 docs/superpowers/
